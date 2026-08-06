@@ -1002,6 +1002,21 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         day_desc = "周末愉快" if wd >= 5 else "工作日辛苦了"
         lines = [f"{greeting}！今天是{weekday_names[wd]}，{day_desc}。"]
 
+        # 📌 检查是否配置了任何传感器实体：全空 → 播报提示"暂未添加传感器"
+        _any_sensor = (
+            (config.get("temp_sensors") or {})
+            or (config.get("humidity_sensors") or {})
+            or (config.get("power_sensors") or {})
+            or (config.get("lights") or {})
+            or (config.get("doors") or {})
+            or (config.get("important_devices") or {})
+        )
+        if not _any_sensor:
+            # 全空：直接播"暂未添加传感器"，跳过所有板块生成（避免缺键报错）
+            lines.append("暂未添加传感器，请先在传感器配置里添加要播报的设备。")
+            await broadcast_sentences(lines, now, ws, config, text_only, summary_type="daily")
+            return
+
         # 结构化实时数据（LLM 引擎用，规则模板不用）
         report = {
             "time": {"weekday": weekday_names[wd], "period": period, "is_weekend": wd >= 5},
@@ -1107,31 +1122,34 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         safety_parts = []
         open_doors = []
-        for eid, name in config.get("doors", {}).items():
-            if states.get(eid, {}).get("state") == "on":
-                if name.endswith("盖") or name.endswith("盖子"):
-                    continue  # 家电盖子后面单独说
-                open_doors.append(name)
-
         door_parts = []
         special_parts = []
-        for d in open_doors:
-            if d in ("钥匙", "钥匙盒"):
-                special_parts.append("钥匙没放好")
-            elif "外卖" in d:
-                special_parts.append("外卖还没取")
-            else:
-                door_parts.append(d)
+        # 没配置门窗传感器 → 整个安全板块跳过（不报"门窗都已关好"这种误报）
+        doors_cfg = config.get("doors") or {}
+        if doors_cfg:
+            for eid, name in doors_cfg.items():
+                if states.get(eid, {}).get("state") == "on":
+                    if name.endswith("盖") or name.endswith("盖子"):
+                        continue  # 家电盖子后面单独说
+                    open_doors.append(name)
 
-        if door_parts:
-            if h >= 18:
-                safety_parts.append(f"{'、'.join(door_parts)}还开着，睡前记得关好")
-            else:
-                safety_parts.append(f"{'、'.join(door_parts)}还开着")
-        if not open_doors and not door_parts:
-            safety_parts.append("门窗都已关好，家里很安全")
-        if special_parts:
-            safety_parts.append("，".join(special_parts))
+            for d in open_doors:
+                if d in ("钥匙", "钥匙盒"):
+                    special_parts.append("钥匙没放好")
+                elif "外卖" in d:
+                    special_parts.append("外卖还没取")
+                else:
+                    door_parts.append(d)
+
+            if door_parts:
+                if h >= 18:
+                    safety_parts.append(f"{'、'.join(door_parts)}还开着，睡前记得关好")
+                else:
+                    safety_parts.append(f"{'、'.join(door_parts)}还开着")
+            if not open_doors and not door_parts:
+                safety_parts.append("门窗都已关好，家里很安全")
+            if special_parts:
+                safety_parts.append("，".join(special_parts))
 
         # 家电盖子
         open_lids = []
@@ -1154,7 +1172,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         # 4. 🌬️ 空气质量
         # ─────────────────────────────────────────
-        pm25 = get_float(states, config["pm25_sensor"])
+        pm25 = get_float(states, config.get("pm25_sensor", ""))
         report["pm25"] = pm25
         if pm25 is not None:
             if pm25 > 100:
@@ -1167,13 +1185,15 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         # 5. 💡 灯光
         # ─────────────────────────────────────────
-        lights_on = [n for eid, n in config["lights"].items()
+        lights_cfg = config.get("lights") or {}
+        lights_on = [n for eid, n in lights_cfg.items()
                      if states.get(eid, {}).get("state") == "on"]
         report["lights_on"] = lights_on
-        if lights_on:
-            lines.append(f"{'、'.join(lights_on)}还亮着，不需要的话可以关掉。")
-        else:
-            lines.append("所有主灯都已关闭，省电又环保。")
+        if lights_cfg:
+            if lights_on:
+                lines.append(f"{'、'.join(lights_on)}还亮着，不需要的话可以关掉。")
+            else:
+                lines.append("所有主灯都已关闭，省电又环保。")
 
         # ─────────────────────────────────────────
         # 6. 💻 终端任务
