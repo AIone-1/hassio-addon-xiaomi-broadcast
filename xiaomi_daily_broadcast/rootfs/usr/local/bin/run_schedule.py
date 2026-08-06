@@ -42,6 +42,65 @@ def get_webui():
     return WEBUI_HTML
 
 
+def ha_entities():
+    """从 HA 拉全部实体状态列表（供配置页下拉选择）。返回 [{entity_id, name, state, domain}]。"""
+    import urllib.request
+    try:
+        ws, api, token = ds._ha_endpoints()
+        req = urllib.request.Request(api.rstrip("/") + "/states",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            states = json.loads(resp.read())
+        out = []
+        for s in states:
+            eid = s.get("entity_id", "")
+            out.append({
+                "entity_id": eid,
+                "name": s.get("attributes", {}).get("friendly_name", ""),
+                "state": s.get("state", ""),
+                "domain": eid.split(".")[0],
+            })
+        return out
+    except Exception as e:
+        log(f"⚠️ 拉取 HA 实体失败: {e}")
+        return []
+
+
+# 配置页可编辑的实体映射段（key → 配置 JSON 里的顶层键）
+EDITABLE_SECTIONS = [
+    {"key": "temp_sensors", "title": "🌡️ 温度传感器", "domains": ["sensor"], "room": True},
+    {"key": "humidity_sensors", "title": "💧 湿度传感器", "domains": ["sensor"], "room": True},
+    {"key": "power_sensors", "title": "⚡ 用电（power_cost_today）", "domains": ["sensor"], "room": True},
+    {"key": "power_now", "title": "🔌 实时功率（可选）", "domains": ["sensor"], "room": True},
+    {"key": "lights", "title": "💡 灯光", "domains": ["light"], "room": True},
+    {"key": "doors", "title": "🚪 门窗（on=开）", "domains": ["binary_sensor"], "room": True},
+    {"key": "important_devices", "title": "⚠️ 重要设备（离线提醒）", "domains": ["climate", "fan", "media_player", "switch"], "room": True},
+]
+
+
+def load_edit_cfg():
+    """读配置（含 options 合并），供配置页展示。"""
+    return ds.load_config()
+
+
+def save_edit_cfg(updates):
+    """原子写配置 JSON：updates 里的段整体替换，其余保留。
+    读原始 JSON（不合并 options）——engine 段(含 DeepSeek key)由 options 管理，不落盘到可编辑文件。"""
+    cfg = json.loads(ds.CONFIG_PATH.read_text()) if ds.CONFIG_PATH.exists() else {}
+    for k, v in updates.items():
+        if v is None:
+            cfg.pop(k, None)
+        else:
+            cfg[k] = v
+    tmp = str(ds.CONFIG_PATH) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, str(ds.CONFIG_PATH))
+    return cfg
+
+
 def run_broadcast(summary_type="daily", text_only=False):
     """在独立线程里跑播报（force=True），用锁与调度串行化防双播。"""
     def _run():
@@ -115,6 +174,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, STATE_FILE.read_text(), "application/json")
             except Exception:
                 self._send(200, json.dumps({"status": "idle"}), "application/json")
+        elif path == "/api/entities":
+            self._send(200, json.dumps(ha_entities(), ensure_ascii=False), "application/json")
+        elif path == "/api/config":
+            self._send(200, json.dumps(load_edit_cfg(), ensure_ascii=False), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -146,6 +209,13 @@ class Handler(BaseHTTPRequestHandler):
                               "text": text, "done": False,
                               "created": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")})
                 ds.MEMO_FILE.write_text(json.dumps(memos, ensure_ascii=False))
+                self._send(200, json.dumps({"ok": True}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/api/config":
+            try:
+                data = json.loads(self._body() or b"{}")
+                save_edit_cfg(data.get("updates", {}))
                 self._send(200, json.dumps({"ok": True}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
