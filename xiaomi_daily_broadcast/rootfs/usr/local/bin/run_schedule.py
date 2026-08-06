@@ -182,6 +182,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(ha_entities(), ensure_ascii=False), "application/json")
         elif path in ("/cfg/config", "/api/config"):
             self._send(200, json.dumps(load_edit_cfg(), ensure_ascii=False), "application/json")
+        elif path == "/theme":
+            try:
+                self._send(200, Path("/data/theme.json").read_text(), "application/json")
+            except Exception:
+                self._send(200, json.dumps({"theme": "dark"}), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -223,6 +228,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": True}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/theme":
+            try:
+                data = json.loads(self._body() or b"{}")
+                Path("/data/theme.json").write_text(json.dumps({"theme": data.get("theme", "dark")}))
+                self._send(200, json.dumps({"ok": True}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/logs/clear":
+            LOG_TAIL.clear()
+            self._send(200, json.dumps({"ok": True}), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -234,38 +249,50 @@ WEBUI_HTML = """<!DOCTYPE html>
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">
 <title>小爱每日播报</title>
 <style>
-  body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:16px}
-  h1{font-size:18px;color:#f0f6fc}
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --bg3:#0a0e14; --bg-inset:#0d1117;
+    --border:#30363d; --text:#c9d1d9; --title:#f0f6fc; --dim:#8b949e; --faint:#484f58;
+    --accent:#1f6feb; --accent2:#58a6ff; --red:#f85149; --green:#3fb950;
+  }
+  body[data-theme=\"light\"]{
+    --bg:#ffffff; --bg2:#f6f8fa; --bg3:#f6f8fa; --bg-inset:#ffffff;
+    --border:#d0d7de; --text:#24292f; --title:#1f2328; --dim:#57606a; --faint:#8b949e;
+    --accent:#0969da; --accent2:#0969da; --red:#cf222e; --green:#1a7f37;
+  }
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:16px}
+  h1{font-size:18px;color:var(--title)}
   .tabs{display:flex;gap:6px;margin-bottom:12px}
-  .tab{padding:8px 18px;border-radius:8px;background:#161b22;border:1px solid #30363d;color:#8b949e;cursor:pointer;font-size:14px}
-  .tab.on{background:#1f6feb;color:#fff;border-color:#1f6feb}
-  .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;margin-bottom:12px}
+  .tab{padding:8px 18px;border-radius:8px;background:var(--bg2);border:1px solid var(--border);color:var(--dim);cursor:pointer;font-size:14px}
+  .tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px}
   .row{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center}
-  button{padding:10px 16px;border:none;border-radius:8px;background:#1f6feb;color:#fff;font-size:14px;cursor:pointer}
+  button{padding:10px 16px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;cursor:pointer}
   button:active{opacity:.8}
-  button.ghost{background:transparent;border:1px solid #1f6feb;color:#58a6ff}
-  button.danger{background:transparent;border:1px solid #f85149;color:#f85149;padding:6px 10px;font-size:12px}
-  select{padding:8px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;max-width:320px}
-  input[type=text]{padding:8px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d}
+  button.ghost{background:transparent;border:1px solid var(--accent);color:var(--accent2)}
+  button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
+  select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
+  input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
   .entry input{flex:1;min-width:120px}
-  .entry .del{background:transparent;border:none;color:#f85149;cursor:pointer;font-size:16px}
-  .sec-title{font-size:13px;font-weight:600;color:#f0f6fc;margin-bottom:4px}
-  .sec-desc{font-size:11px;color:#8b949e;margin-bottom:10px}
-  .add{background:transparent;border:1px dashed #30363d;color:#58a6ff;padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
+  .entry .del{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px}
+  .sec-title{font-size:13px;font-weight:600;color:var(--title);margin-bottom:4px}
+  .sec-desc{font-size:11px;color:var(--dim);margin-bottom:10px}
+  .add{background:transparent;border:1px dashed var(--border);color:var(--accent2);padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
   .search-row{margin:8px 0}
-  .search-row input{width:100%;padding:8px 10px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d}
-  .search-row input:focus{border-color:#1f6feb;outline:none}
-  #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:#0a0e14;padding:10px;border-radius:8px}
-  #status{font-size:12px;color:#8b949e}
-  .save-status{font-size:12px;color:#3fb950;min-height:18px;margin-top:8px}
+  .search-row input{width:100%;padding:8px 10px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
+  .search-row input:focus{border-color:var(--accent);outline:none}
+  #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
+  #status{font-size:12px;color:var(--dim)}
+  .save-status{font-size:12px;color:var(--green);min-height:18px;margin-top:8px}
   .page{display:none}
   .page.on{display:block}
 </style>
 </head>
-<body>
-<h1>🎙️ 小爱每日播报</h1>
+<body data-theme=\"dark\">
+<h1 style=\"display:flex;align-items:center;gap:8px\">🎙️ 小爱每日播报
+  <button class=\"ghost\" id=\"themeBtn\" onclick=\"toggleTheme()\" style=\"margin-left:auto;padding:6px 12px;font-size:12px\">☀️ 日间</button>
+</h1>
 <div class=\"tabs\">
   <div class=\"tab on\" id=\"tabMain\" onclick=\"showPage('main')\">📢 播报</div>
   <div class=\"tab\" id=\"tabCfg\" onclick=\"showPage('cfg')\">⚙️ 传感器配置</div>
@@ -284,6 +311,7 @@ WEBUI_HTML = """<!DOCTYPE html>
       <button onclick=\"trigger(false)\">📢 立即播报</button>
       <button class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
       <button class=\"ghost\" onclick=\"refreshLog()\">🔄 刷新日志</button>
+      <button class=\"ghost\" onclick=\"clearLog()\">🗑️ 清空日志</button>
     </div>
     <div id=\"status\">就绪</div>
   </div>
@@ -318,6 +346,27 @@ WEBUI_HTML = """<!DOCTYPE html>
 // 🔑 ingress 前缀：HA ingress 下页面 URL 是 /api/hassio_ingress/<token>/...
 // 必须用相对路径（基于 location.pathname）而不是写死 /，否则请求打到 HA 主 API
 var BASE = location.pathname.replace(/\\/[^/]*$/, '/');
+
+/* ─── 主题（白天/夜晚）─── */
+function setTheme(t){
+  document.body.setAttribute('data-theme',t);
+  document.getElementById('themeBtn').textContent=(t==='dark'?'☀️ 日间':'🌙 夜间');
+}
+function toggleTheme(){
+  var cur=document.body.getAttribute('data-theme')||'dark';
+  var next=(cur==='dark')?'light':'dark';
+  setTheme(next);
+  // 存后端 /data/theme.json（ingress 下 localStorage 不可用）
+  try{ fetch(BASE+'theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(function(){}); }catch(e){}
+}
+(function(){
+  try{
+    fetch(BASE+'theme?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+      if(d&&d.theme) setTheme(d.theme);
+    }).catch(function(){});
+  }catch(e){}
+})();
+
 var ENTITIES=[], CONFIG={};
 var SECTIONS=[
   {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'家里各房间温度',domains:['sensor'],room:true},
@@ -379,7 +428,7 @@ function renderSections(){
     for(var k in items){ if(k!=='_note') entries.push([k,items[k]]); }
     h+='<div class=\"sec-title\" style=\"margin-top:12px\">'+sec.title+'</div>';
     h+='<div class=\"sec-desc\">'+sec.desc+'</div>';
-    h+='<div class=\"search-row\"><input type=\"text\" placeholder=\"🔍 搜索实体（如 卧室 温度 / 传感器id）\" oninput=\"onSearch(\\''+sec.key+'\\')\" id=\"search-'+sec.key+'\"></div>';
+    h+='<div class=\"search-row\"><input type=\"text\" placeholder=\"🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）\" onfocus=\"onSearch(\\''+sec.key+'\\')\" oninput=\"onSearch(\\''+sec.key+'\\')\" id=\"search-'+sec.key+'\"></div>';
     h+='<div id=\"sec-'+sec.key+'\">';
     entries.forEach(function(pair,i){
       h+=entryHTML(sec, pair[0], pair[1], i);
@@ -391,31 +440,31 @@ function renderSections(){
   el.innerHTML=h;
 }
 
-// 搜索某个 section 的实体候选（匹配则显示，最多 30 个）
+// 搜索某个 section 的实体候选：点开(focus)显示全部，输入关键词过滤（最多 30 个）
 function onSearch(key){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var q=(document.getElementById('search-'+key).value||'').toLowerCase().trim();
   var box=document.getElementById('cand-'+key);
-  if(!q){ box.innerHTML=''; return; }
   var used={};
   var box2=document.getElementById('sec-'+key);
-  if(box2) box2.querySelectorAll('.entry select').forEach(function(s){used[s.value]=true;});
+  if(box2) box2.querySelectorAll('.entry input').forEach(function(s){used[(s.value||'').trim()]=true;});
   var matches=[];
   ENTITIES.forEach(function(e){
     if(sec.domains.indexOf(e.domain)<0) return;
     if(used[e.entity_id]) return;
     var hay=(e.entity_id+' '+(e.name||'')).toLowerCase();
-    if(hay.indexOf(q)>=0) matches.push(e);
+    if(!q || hay.indexOf(q)>=0) matches.push(e);
   });
   if(!matches.length){ box.innerHTML='<div style=\"color:#8b949e;font-size:12px;padding:6px 0\">无匹配实体</div>'; return; }
-  var h='<div style=\"font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px\">匹配 '+matches.length+' 个（点击选择）</div>';
+  var total=matches.length;
+  var h='<div style=\"font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px\">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择）</div>';
   var shown=0;
   matches.forEach(function(e){
     if(shown>=30) return; shown++;
     var label=(e.name?e.name+' — ':'')+e.entity_id;
-    h+='<div style=\"padding:7px 10px;margin-bottom:3px;border-radius:6px;background:#0d1117;border:1px solid #30363d;cursor:pointer;font-size:12px\" onclick=\"pickCandidate(\\''+key+'\\',\\''+e.entity_id+'\\')\">🔗 '+esc(label)+'</div>';
+    h+='<div style=\"padding:7px 10px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset,#0d1117);border:1px solid #30363d;cursor:pointer;font-size:12px\" onclick=\"pickCandidate(\\''+key+'\\',\\''+e.entity_id+'\\')\">🔗 '+esc(label)+'</div>';
   });
-  if(matches.length>30) h+='<div style=\"color:#8b949e;font-size:11px;padding:4px 0\">仅显示前 30 个，输入更多关键词缩小范围</div>';
+  if(total>30) h+='<div style=\"color:#8b949e;font-size:11px;padding:4px 0\">仅显示前 30 个，输入关键词缩小范围</div>';
   box.innerHTML=h;
 }
 
@@ -529,6 +578,11 @@ function refreshLog(){
     document.getElementById('log').textContent=(a||[]).join('\\n')||'暂无日志';
     document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;
   });
+}
+function clearLog(){
+  fetch(BASE+'logs/clear',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('log').textContent='';
+  }).catch(function(){document.getElementById('log').textContent='';});
 }
 setInterval(refreshLog,5000);
 refreshLog();
