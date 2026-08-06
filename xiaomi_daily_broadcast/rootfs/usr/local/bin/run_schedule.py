@@ -21,6 +21,42 @@ LOCK = threading.Lock()
 LOG_TAIL = []           # 内存日志环形缓冲（最近 200 条）
 LOG_MAX = 200
 STATE_FILE = Path("/data/broadcast_state.json")
+HISTORY_FILE = Path("/share/xiaomi_broadcast/broadcast_history.jsonl")
+
+
+def load_history():
+    """读播报历史 JSONL → [{date,time,text,count,type,sentences}]，按时间倒序。"""
+    out = []
+    try:
+        if HISTORY_FILE.exists():
+            for line in HISTORY_FILE.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                    out.append(r)
+                except Exception:
+                    pass
+    except Exception as e:
+        log(f"⚠️ 读历史失败: {e}")
+    out.sort(key=lambda r: (r.get("date", ""), r.get("ts", "")), reverse=True)
+    return out
+
+
+def history_days(month):
+    """某月（YYYY-MM）有记录的日期列表。"""
+    days = set()
+    for r in load_history():
+        d = r.get("date", "")
+        if d.startswith(month):
+            days.add(d)
+    return sorted(days, reverse=True)
+
+
+def history_day(date_str):
+    """某天的所有记录。"""
+    return [r for r in load_history() if r.get("date") == date_str]
 
 
 def log(msg):
@@ -171,7 +207,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(ln) if ln else b""
 
     def do_GET(self):
+        import urllib.parse as up
         path = self.path.split("?")[0]
+        q = up.parse_qs(up.urlsplit(self.path).query)
         if path == "/" or path == "/index.html":
             self._send(200, get_webui())
         elif path == "/logs":
@@ -191,6 +229,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, Path("/data/theme.json").read_text(), "application/json")
             except Exception:
                 self._send(200, json.dumps({"theme": "dark"}), "application/json")
+        elif path == "/history/days":
+            month = q.get("month", [""])[0] or datetime.now().strftime("%Y-%m")
+            self._send(200, json.dumps(history_days(month), ensure_ascii=False), "application/json")
+        elif path == "/history/day":
+            date_str = q.get("date", [""])[0]
+            self._send(200, json.dumps(history_day(date_str), ensure_ascii=False), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -291,6 +335,27 @@ WEBUI_HTML = """<!DOCTYPE html>
   .save-status{font-size:12px;color:var(--green);min-height:18px;margin-top:8px}
   .page{display:none}
   .page.on{display:block}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:10px}
+  .cal-dow{text-align:center;font-size:10px;color:var(--faint);padding:4px 0}
+  .cal-cell{height:36px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;border:1px solid transparent;color:var(--text);position:relative}
+  .cal-cell:hover{background:var(--bg-inset);border-color:var(--border)}
+  .cal-cell.empty{cursor:default}
+  .cal-cell.has{color:var(--accent2);font-weight:600}
+  .cal-cell.has .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);position:absolute;bottom:3px}
+  .cal-cell.today{border-color:var(--accent)}
+  .cal-cell.selected{background:var(--accent);color:#fff}
+  .cal-cell.selected .dot{background:#fff}
+  .hist-entry{padding:10px 12px;margin-bottom:6px;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer}
+  .hist-entry:active{opacity:.8}
+  .hist-entry .t{font-size:11px;color:var(--dim);margin-bottom:2px}
+  .hist-entry .x{font-size:13px;line-height:1.5}
+  .hist-entry .b{font-size:10px;color:var(--accent2);margin-top:2px}
+  .hist-entry .type-badge{display:inline-block;font-size:10px;font-weight:600;border-radius:5px;padding:0 5px;margin-left:6px}
+  .tb-daily{color:#58a6ff;border:1px solid #58a6ff55;background:#58a6ff18}
+  .tb-weekly{color:#3fb950;border:1px solid #3fb95055;background:#3fb95018}
+  .tb-monthly{color:#bc8cff;border:1px solid #bc8cff55;background:#bc8cff18}
+  .tb-yearly{color:#f85149;border:1px solid #f8514955;background:#f8514918}
+  .hist-full-line{padding:6px 8px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset);font-size:13px;line-height:1.6}
 </style>
 </head>
 <body data-theme=\"dark\">
@@ -300,6 +365,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class=\"tabs\">
   <div class=\"tab on\" id=\"tabMain\" onclick=\"showPage('main')\">📢 播报</div>
   <div class=\"tab\" id=\"tabCfg\" onclick=\"showPage('cfg')\">⚙️ 传感器配置</div>
+  <div class=\"tab\" id=\"tabHist\" onclick=\"showPage('hist')\">📜 历史</div>
 </div>
 
 <!-- 播报页 -->
@@ -314,7 +380,6 @@ WEBUI_HTML = """<!DOCTYPE html>
       </select>
       <button onclick=\"trigger(false)\">📢 立即播报</button>
       <button class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
-      <button class=\"ghost\" onclick=\"refreshLog()\">🔄 刷新日志</button>
       <button class=\"ghost\" onclick=\"clearLog()\">🗑️ 清空日志</button>
     </div>
     <div id=\"status\">就绪</div>
@@ -343,6 +408,21 @@ WEBUI_HTML = """<!DOCTYPE html>
     <div id=\"sections\"></div>
     <button onclick=\"saveCfg()\" style=\"margin-top:12px;width:100%\">💾 保存配置</button>
     <div class=\"save-status\" id=\"cfgStatus\"></div>
+  </div>
+</div>
+
+<!-- 历史页 -->
+<div class=\"page\" id=\"page-hist\">
+  <div class=\"card\">
+    <div class=\"row\" style=\"justify-content:center\">
+      <button class=\"ghost\" onclick=\"histNav(-1)\">‹</button>
+      <span id=\"histTitle\" style=\"font-size:15px;font-weight:600;min-width:120px;text-align:center\"></span>
+      <button class=\"ghost\" onclick=\"histNav(1)\">›</button>
+    </div>
+    <div class=\"cal-grid\" id=\"histCal\"></div>
+  </div>
+  <div class=\"card\">
+    <div id=\"histList\" style=\"font-size:12px;color:#8b949e\">选择日期查看播报记录</div>
   </div>
 </div>
 
@@ -388,9 +468,12 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function showPage(p){
   document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
   document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
+  document.getElementById('tabHist').className='tab'+(p==='hist'?' on':'');
   document.getElementById('page-main').className='page'+(p==='main'?' on':'');
   document.getElementById('page-cfg').className='page'+(p==='cfg'?' on':'');
+  document.getElementById('page-hist').className='page'+(p==='hist'?' on':'');
   if(p==='cfg'){ loadCfgPage(); }
+  if(p==='hist'){ loadHist(); }
 }
 
 function optsFor(domain, cur){
@@ -603,6 +686,80 @@ function clearLog(){
     document.getElementById('log').textContent='';
   }).catch(function(){document.getElementById('log').textContent='';});
 }
+/* ─── 历史记录 ─── */
+var histYM={y:new Date().getFullYear(),m:new Date().getMonth()};
+var histDays={}, histSel='';
+function pad(n){return n<10?'0'+n:''+n;}
+function histFmt(y,m){return y+'-'+pad(m+1);}
+function histLoadCal(){
+  var ym=histFmt(histYM.y,histYM.m);
+  fetch(BASE+'history/days?month='+ym+'&_='+Date.now()).then(function(r){return r.json()}).then(function(days){
+    histDays={}; (days||[]).forEach(function(d){histDays[d]=true;});
+    histRenderCal();
+  }).catch(function(){histDays={};histRenderCal();});
+}
+function histRenderCal(){
+  var y=histYM.y,m=histYM.m;
+  var first=new Date(y,m,1).getDay();
+  var daysInMonth=new Date(y,m+1,0).getDate();
+  var today=new Date();
+  var todayStr=histFmt(today.getFullYear(),today.getMonth())+'-'+pad(today.getDate());
+  if(histSel && !histSel.startsWith(histFmt(y,m))) histSel='';
+  document.getElementById('histTitle').textContent=y+'年'+(m+1)+'月';
+  var h='';
+  ['日','一','二','三','四','五','六'].forEach(function(w){h+='<div class=\"cal-dow\">'+w+'</div>';});
+  for(var i=0;i<first;i++) h+='<div class=\"cal-cell empty\"></div>';
+  for(var d=1;d<=daysInMonth;d++){
+    var ds=histFmt(y,m)+'-'+pad(d);
+    var has=histDays[ds];
+    var cls='cal-cell'+(has?' has':'')+(ds===todayStr?' today':'')+(ds===histSel?' selected':'');
+    h+='<div class=\"'+cls+'\" onclick=\"histPick(\\''+ds+'\\')\">'+d+(has?'<span class=\"dot\"></span>':'')+'</div>';
+  }
+  document.getElementById('histCal').innerHTML=h;
+}
+function histNav(dir){
+  histYM.m+=dir;
+  if(histYM.m<0){histYM.m=11;histYM.y--;}
+  if(histYM.m>11){histYM.m=0;histYM.y++;}
+  histLoadCal();
+}
+function histPick(ds){
+  histSel=ds;
+  histRenderCal();
+  var list=document.getElementById('histList');
+  list.innerHTML='<div style=\"color:var(--dim)\">加载中...</div>';
+  fetch(BASE+'history/day?date='+ds+'&_='+Date.now()).then(function(r){return r.json()}).then(function(entries){
+    if(!entries.length){list.innerHTML='<div style=\"color:var(--dim)\">当天暂无播报</div>';return;}
+    var tb={'daily':'日报','weekly':'周报','monthly':'月报','yearly':'年报'};
+    var tc={'daily':'tb-daily','weekly':'tb-weekly','monthly':'tb-monthly','yearly':'tb-yearly'};
+    var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">'+ds+' · '+entries.length+'次播报</div>';
+    entries.forEach(function(e,i){
+      var t=e.type||'daily';
+      h+='<div class=\"hist-entry\" onclick=\"histView(\\''+ds+'\\','+i+')\">';
+      h+='<div class=\"t\">'+e.ts+' <span class=\"type-badge '+tc[t]+'\">'+tb[t]+'</span></div>';
+      h+='<div class=\"x\">'+esc(e.text||'')+'</div>';
+      h+='<div class=\"b\">'+e.count+'句 ›</div>';
+      h+='</div>';
+    });
+    list.innerHTML=h;
+  }).catch(function(){list.innerHTML='<div style=\"color:var(--red)\">加载失败</div>';});
+}
+function histView(ds,idx){
+  var list=document.getElementById('histList');
+  fetch(BASE+'history/day?date='+ds+'&_='+Date.now()).then(function(r){return r.json()}).then(function(entries){
+    var e=entries[idx];
+    var all=e.sentences||[];
+    var tb={'daily':'日报','weekly':'周报','monthly':'月报','yearly':'年报'};
+    var tc={'daily':'tb-daily','weekly':'tb-weekly','monthly':'tb-monthly','yearly':'tb-yearly'};
+    var t=e.type||'daily';
+    var h='<button class=\"ghost\" onclick=\"histPick(\\''+ds+'\\')\" style=\"margin-bottom:10px;padding:6px 12px;font-size:12px\">← 返回</button>';
+    h+='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">'+ds+' '+e.ts+' · 完整内容 <span class=\"type-badge '+tc[t]+'\">'+tb[t]+'</span></div>';
+    all.forEach(function(s){ h+='<div class=\"hist-full-line\">'+esc(s.text||'')+'</div>'; });
+    list.innerHTML=h;
+  });
+}
+function loadHist(){ histLoadCal(); }
+
 setInterval(refreshLog,5000);
 refreshLog();
 </script>
