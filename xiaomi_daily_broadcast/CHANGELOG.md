@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5 (2026-08-06)
+
+- 🐛 修复"无 HA token"：SUPERVISOR_TOKEN 拿不到时自动 fallback 到设置页的 ha_token（手动兜底）
+
 ## 1.0.4 (2026-08-06)
 
 - 🐛 实体下拉改为 `/cfg/` 路径（避免 ingress 下 `/api/` 嵌套被 HA 拦截），兼容旧 `/api/`

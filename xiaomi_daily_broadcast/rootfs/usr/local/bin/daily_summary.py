@@ -43,14 +43,18 @@ def load_options():
 
 
 def _ha_endpoints():
-    """根据 options 决定 HA 连接端点与 token。supervisor 模式自动用 SUPERVISOR_TOKEN。"""
+    """根据 options 决定 HA 连接端点与 token。supervisor 模式自动用 SUPERVISOR_TOKEN。
+    若拿不到 SUPERVISOR_TOKEN，fallback 到 options 里的 ha_token（手动兜底）。"""
     opt = load_options()
     host = (opt.get("ha_host") or "supervisor").strip()
     port = int(opt.get("ha_port") or 8123)
     if host in ("supervisor", ""):
+        tok = os.environ.get("SUPERVISOR_TOKEN", "")
+        if not tok:
+            tok = opt.get("ha_token") or ""  # 兜底：用户手动填的 HA 长期 token
         return ("ws://supervisor/core/websocket",
                 "http://supervisor/core/api",
-                os.environ.get("SUPERVISOR_TOKEN", ""))
+                tok)
     token = opt.get("ha_token") or ""
     return (f"ws://{host}:{port}/api/websocket",
             f"http://{host}:{port}/api",
