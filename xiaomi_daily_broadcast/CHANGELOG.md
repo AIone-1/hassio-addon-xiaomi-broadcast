@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.3 (2026-08-06)
+
+- 🐛 **修复"只看文字还播语音"根因**：前端 URL 里 `text_only=true` 直接拼接 `Date.now()` 时间戳 → 变成 `text_only=true1694...` → 后端 `=="true"` 失败 → 走了语音路径。修复：前端 URL 用 `&_=` 分隔时间戳；后端用 `startswith("true")` 兼容
+- 📐 布局：音箱下拉宽度限制(360px)；每日/周/月/年选项和按钮同大小
+
 ## 1.1.2 (2026-08-06)
 
 - 🔘 播报按钮：`input_button.xiao_ai_bo_bao_an_niu`（小爱播报按钮），自动化里 `input_button.press` → 触发一次语音播报（按钮按完自动回弹）

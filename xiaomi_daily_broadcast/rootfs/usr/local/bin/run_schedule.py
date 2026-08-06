@@ -326,7 +326,8 @@ class Handler(BaseHTTPRequestHandler):
         q = up.parse_qs(up.urlsplit(self.path).query)
         if path == "/trigger":
             t = (q.get("type") or ["daily"])[0]
-            to = (q.get("text_only") or ["false"])[0].lower() == "true"
+            # 用 startswith("true")：兼容历史 URL 里 Date.now() 粘在 true 后面变成 true1694 的情况
+            to = (q.get("text_only") or ["false"])[0].lower().startswith("true")
             run_broadcast(summary_type=t, text_only=to)
             self._send(202, json.dumps({"ok": True, "type": t}), "application/json")
         elif path == "/task":
@@ -454,7 +455,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class=\"page on\" id=\"page-main\">
   <div class=\"card\">
     <div class=\"row\">
-      <select id=\"type\">
+      <select id=\"type\" style=\"padding:10px 16px;font-size:14px;border-radius:8px;flex:0 0 auto\">
         <option value=\"daily\">📅 每日</option>
         <option value=\"weekly\">🗓️ 周</option>
         <option value=\"monthly\">📆 月</option>
@@ -481,7 +482,7 @@ WEBUI_HTML = """<!DOCTYPE html>
     <div class=\"sec-title\">🎙️ 播报音箱</div>
     <div class=\"sec-desc\">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
     <div class=\"row\">
-      <select id=\"cfg-speaker\" style=\"flex:1;max-width:none\"></select>
+      <select id=\"cfg-speaker\" style=\"flex:1;max-width:360px\"></select>
     </div>
   </div>
   <div class=\"card\">
@@ -771,7 +772,7 @@ function saveCfg(){
 /* ─── 播报页 ─── */
 function trigger(textOnly){
   var t=document.getElementById('type').value;
-  fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+Date.now(),{method:'POST'})
+  fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+'&_='+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
     .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
