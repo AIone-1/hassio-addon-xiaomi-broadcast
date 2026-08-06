@@ -226,8 +226,8 @@ function renderSections(){
     h+='<div class="sec-desc">'+sec.desc+'</div>';
     h+='<div class="search-row"><input type="text" placeholder="🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）" onfocus="onSearch(\''+sec.key+'\')" oninput="onSearch(\''+sec.key+'\')" id="search-'+sec.key+'"></div>';
     h+='<div id="sec-'+sec.key+'">';
-    entries.forEach(function(pair,i){
-      h+=entryHTML(sec, pair[0], pair[1], i);
+    entries.forEach(function(pair){
+      h+=entryHTML(sec, pair[0], pair[1]);
     });
     h+='</div>';
     h+='<div id="cand-'+sec.key+'"></div>';
@@ -273,38 +273,36 @@ function onSearch(key){
 
 // 点击候选实体 → 添加到该 section 映射（房间名空，用户填）
 function pickCandidate(key, eid){
-  collectSection(key);
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  var idx=box.querySelectorAll('.entry').length;
-  box.innerHTML+=entryHTML(sec, eid, '', idx);
+  box.insertAdjacentHTML('beforeend', entryHTML(sec, eid, ''));
+  collectSection(key);
   document.getElementById('cand-'+key).innerHTML='';
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, i, editable){
+function entryHTML(sec, eid, room, editable){
   var ph=sec.room?'房间名':'标签';
   // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   var eidAttr = editable
-    ? 'placeholder="填实体 id" oninput="collectEntry(\''+sec.key+'\','+i+')"'
+    ? 'placeholder="填实体 id" oninput="manualEid(this,\''+sec.key+'\')"'
     : 'readonly';
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
     : 'flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9';
-  return '<div class="entry">'
+  return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
-    +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="collectEntry(\''+sec.key+'\','+i+')">'
-    +'<button class="del" onclick="delEntry(\''+sec.key+'\','+i+')">✕</button>'
+    +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="onRoom(this,\''+sec.key+'\')">'
+    +'<button class="del" onclick="delEntry(\''+sec.key+'\',this)">✕</button>'
     +'</div>';
 }
 
-// 收集每段当前条目到 CONFIG
+// 收集每段当前条目到 CONFIG（读 DOM 里的 .entry）
 function collectSection(key){
   var box=document.getElementById('sec-'+key);
   if(!box) return;
   var out={};
   box.querySelectorAll('.entry').forEach(function(e){
-    // 第一个 input 是实体 id（readonly），第二个是房间名
     var ins=e.querySelectorAll('input');
     var eid=(ins[0]&&ins[0].value||'').trim();
     var room=(ins[1]&&ins[1].value||'').trim();
@@ -313,21 +311,29 @@ function collectSection(key){
   CONFIG[key]=out;
 }
 
+// 手动添加：追加一个可编辑空条目（实体 id + 房间名都可填）
 function addEntry(key){
-  collectSection(key);
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  box.innerHTML+=entryHTML(sec,'','',box.querySelectorAll('.entry').length, true);
+  box.insertAdjacentHTML('beforeend', entryHTML(sec,'','',true));
 }
 
-function delEntry(key,i){
-  collectSection(key);
+// 手动条目实体 id 输入：同步更新 CONFIG（去掉空实体 id）
+function manualEid(el,key){
   var box=document.getElementById('sec-'+key);
-  var entries=box.querySelectorAll('.entry');
-  if(entries[i]) entries[i].remove();
+  var ins=box.querySelectorAll('.entry input');
+  var eid=el.value.trim();
+  // 收集该条目：实体 id + 房间名
+  collectSection(key);
 }
 
-function collectEntry(key,i){
+// 房间名输入：实时收集
+function onRoom(el,key){ collectSection(key); }
+
+// 删除条目：直接删 DOM，删除后重新收集 CONFIG（不再用索引，用按钮定位父元素）
+function delEntry(key,btn){
+  var entry=btn.closest('.entry');
+  if(entry) entry.remove();
   collectSection(key);
 }
 

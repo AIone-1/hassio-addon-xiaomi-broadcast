@@ -140,7 +140,7 @@ def save_edit_cfg(updates):
     return cfg
 
 
-TRIGGER_ENTITY = "input_boolean.xiao_ai_bo_bao_hong_fa"
+CONTROL_ENTITY = "input_boolean.xiao_ai_bo_bao_kai_guan"
 
 
 def _ws_connect():
@@ -152,8 +152,29 @@ def _ws_connect():
     return ws_url, token
 
 
-def ensure_trigger_entity():
-    """确保触发开关存在（input_boolean.xiao_ai_bo_bao_hong_fa）。已存在则跳过，避免重复创建堆积。"""
+def _ws_state(entity_id):
+    """查一个实体当前状态。"""
+    import websockets
+    ws_url, token = _ws_connect()
+    async def _get():
+        async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "auth", "access_token": token}))
+            await ws.recv()
+            await ws.send(json.dumps({"type": "get_states", "id": 1}))
+            r = json.loads(await ws.recv())
+            for s in r.get("result", []):
+                if s.get("entity_id") == entity_id:
+                    return s.get("state", "unavailable")
+            return "unavailable"
+    try:
+        return asyncio.run(_get())
+    except Exception:
+        return "unavailable"
+
+
+def ensure_control_entity():
+    """确保播报总开关存在（input_boolean.xiao_ai_bo_bao_kai_guan）。on=允许播报，off=停用。"""
     import websockets
     try:
         ws_url, token = _ws_connect()
@@ -165,11 +186,11 @@ def ensure_trigger_entity():
                 await ws.send(json.dumps({"type": "get_states", "id": 1}))
                 r = json.loads(await ws.recv())
                 for s in r.get("result", []):
-                    if s.get("entity_id") == TRIGGER_ENTITY:
+                    if s.get("entity_id") == CONTROL_ENTITY:
                         return True
                 return False
         if asyncio.run(_check()):
-            log("✅ 触发开关已存在: " + TRIGGER_ENTITY)
+            log("✅ 播报开关已存在: " + CONTROL_ENTITY)
             return True
         async def _create():
             async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
@@ -177,57 +198,23 @@ def ensure_trigger_entity():
                 await ws.send(json.dumps({"type": "auth", "access_token": token}))
                 await ws.recv()
                 await ws.send(json.dumps({"id": 1, "type": "input_boolean/create",
-                                          "name": "小爱播报触发", "icon": "mdi:volume-high"}))
+                                          "name": "小爱播报开关", "icon": "mdi:power"}))
                 r = json.loads(await ws.recv())
                 return r.get("success", False)
         ok = asyncio.run(_create())
-        log(("✅ 已创建触发开关: " + TRIGGER_ENTITY) if ok else "⚠️ 触发开关创建失败")
+        log(("✅ 已创建播报开关: " + CONTROL_ENTITY) if ok else "⚠️ 播报开关创建失败")
         return ok
     except Exception as e:
-        log(f"⚠️ 创建触发开关失败: {e}")
+        log(f"⚠️ 创建播报开关失败: {e}")
         return False
 
 
-def trigger_watcher():
-    """监听触发开关：从 off 变 on → 触发一次播报 → 自动复位 off。"""
-    import websockets
-    last = "off"
-    log("🔔 触发开关监听已启动")
-    while True:
-        try:
-            ws_url, token = _ws_connect()
-            async def _get():
-                async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
-                    await ws.recv()
-                    await ws.send(json.dumps({"type": "auth", "access_token": token}))
-                    await ws.recv()
-                    await ws.send(json.dumps({"type": "get_states", "id": 1}))
-                    r = json.loads(await ws.recv())
-                    for s in r.get("result", []):
-                        if s.get("entity_id") == TRIGGER_ENTITY:
-                            return s.get("state", "unavailable")
-                    return "unavailable"
-            state = asyncio.run(_get())
-            if state == "on" and last == "off":
-                log("🔔 触发开关被打开，触发播报")
-                async def _off():
-                    async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
-                        await ws.recv()
-                        await ws.send(json.dumps({"type": "auth", "access_token": token}))
-                        await ws.recv()
-                        await ws.send(json.dumps({"type": "call_service", "domain": "input_boolean",
-                                                  "service": "turn_off",
-                                                  "service_data": {"entity_id": TRIGGER_ENTITY}, "id": 2}))
-                        await ws.recv()
-                try:
-                    asyncio.run(_off())
-                except Exception:
-                    pass
-                run_broadcast(summary_type="daily", text_only=False)
-            last = state
-        except Exception as e:
-            log(f"⚠️ 触发开关监听错误: {e}")
-        time.sleep(2)
+def broadcast_enabled():
+    """播报总开关是否开启（on=允许播报，off=停用）。查不到时默认允许。"""
+    st = _ws_state(CONTROL_ENTITY)
+    if st == "off":
+        return False
+    return True
 
 
 def run_broadcast(summary_type="daily", text_only=False):
@@ -240,6 +227,9 @@ def run_broadcast(summary_type="daily", text_only=False):
                 return
             locked = True
         try:
+            if not broadcast_enabled():
+                log("⏸️ 播报开关已关闭，跳过播报")
+                return
             log(f"📢 手动触发播报: {summary_type}" + ("（只看文字）" if text_only else ""))
             asyncio.run(ds.main(force=True, text_only=text_only, summary_type=summary_type))
         except Exception as e:
@@ -263,6 +253,9 @@ def scheduler_loop():
                 today = datetime.now().strftime("%Y-%m-%d")
                 if last.get(key) != today:
                     last[key] = today
+                    if not broadcast_enabled():
+                        log("⏸️ 播报开关已关闭，跳过定时播报")
+                        continue
                     log(f"⏰ 到点播报: {st}")
                     if not LOCK.acquire(blocking=False):
                         log("⚠️ 已有播报进行中，跳过定时触发")
@@ -608,8 +601,8 @@ function renderSections(){
     h+='<div class=\"sec-desc\">'+sec.desc+'</div>';
     h+='<div class=\"search-row\"><input type=\"text\" placeholder=\"🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）\" onfocus=\"onSearch(\\''+sec.key+'\\')\" oninput=\"onSearch(\\''+sec.key+'\\')\" id=\"search-'+sec.key+'\"></div>';
     h+='<div id=\"sec-'+sec.key+'\">';
-    entries.forEach(function(pair,i){
-      h+=entryHTML(sec, pair[0], pair[1], i);
+    entries.forEach(function(pair){
+      h+=entryHTML(sec, pair[0], pair[1]);
     });
     h+='</div>';
     h+='<div id=\"cand-'+sec.key+'\"></div>';
@@ -655,38 +648,36 @@ function onSearch(key){
 
 // 点击候选实体 → 添加到该 section 映射（房间名空，用户填）
 function pickCandidate(key, eid){
-  collectSection(key);
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  var idx=box.querySelectorAll('.entry').length;
-  box.innerHTML+=entryHTML(sec, eid, '', idx);
+  box.insertAdjacentHTML('beforeend', entryHTML(sec, eid, ''));
+  collectSection(key);
   document.getElementById('cand-'+key).innerHTML='';
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, i, editable){
+function entryHTML(sec, eid, room, editable){
   var ph=sec.room?'房间名':'标签';
   // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   var eidAttr = editable
-    ? 'placeholder=\"填实体 id\" oninput=\"collectEntry(\\''+sec.key+'\\','+i+')\"'
+    ? 'placeholder=\"填实体 id\" oninput=\"manualEid(this,\\''+sec.key+'\\')\"'
     : 'readonly';
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
     : 'flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9';
-  return '<div class=\"entry\">'
+  return '<div class=\"entry\" data-raw=\"'+esc(eid)+'\">'
     +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
-    +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"collectEntry(\\''+sec.key+'\\','+i+')\">'
-    +'<button class=\"del\" onclick=\"delEntry(\\''+sec.key+'\\','+i+')\">✕</button>'
+    +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
+    +'<button class=\"del\" onclick=\"delEntry(\\''+sec.key+'\\',this)\">✕</button>'
     +'</div>';
 }
 
-// 收集每段当前条目到 CONFIG
+// 收集每段当前条目到 CONFIG（读 DOM 里的 .entry）
 function collectSection(key){
   var box=document.getElementById('sec-'+key);
   if(!box) return;
   var out={};
   box.querySelectorAll('.entry').forEach(function(e){
-    // 第一个 input 是实体 id（readonly），第二个是房间名
     var ins=e.querySelectorAll('input');
     var eid=(ins[0]&&ins[0].value||'').trim();
     var room=(ins[1]&&ins[1].value||'').trim();
@@ -695,21 +686,29 @@ function collectSection(key){
   CONFIG[key]=out;
 }
 
+// 手动添加：追加一个可编辑空条目（实体 id + 房间名都可填）
 function addEntry(key){
-  collectSection(key);
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  box.innerHTML+=entryHTML(sec,'','',box.querySelectorAll('.entry').length, true);
+  box.insertAdjacentHTML('beforeend', entryHTML(sec,'','',true));
 }
 
-function delEntry(key,i){
-  collectSection(key);
+// 手动条目实体 id 输入：同步更新 CONFIG（去掉空实体 id）
+function manualEid(el,key){
   var box=document.getElementById('sec-'+key);
-  var entries=box.querySelectorAll('.entry');
-  if(entries[i]) entries[i].remove();
+  var ins=box.querySelectorAll('.entry input');
+  var eid=el.value.trim();
+  // 收集该条目：实体 id + 房间名
+  collectSection(key);
 }
 
-function collectEntry(key,i){
+// 房间名输入：实时收集
+function onRoom(el,key){ collectSection(key); }
+
+// 删除条目：直接删 DOM，删除后重新收集 CONFIG（不再用索引，用按钮定位父元素）
+function delEntry(key,btn){
+  var entry=btn.closest('.entry');
+  if(entry) entry.remove();
   collectSection(key);
 }
 
@@ -862,12 +861,11 @@ def main():
     port = int(os.environ.get("INGRESS_PORT") or os.environ.get("PORT") or "8099")
     # 调度循环在独立线程
     threading.Thread(target=scheduler_loop, daemon=True).start()
-    # 触发开关：创建 + 监听（自动化 turn_on 触发播报）
+    # 播报总开关：创建（on=允许播报，off=停用）
     try:
-        ensure_trigger_entity()
-        threading.Thread(target=trigger_watcher, daemon=True).start()
+        ensure_control_entity()
     except Exception as e:
-        log(f"⚠️ 触发开关初始化失败: {e}")
+        log(f"⚠️ 播报开关初始化失败: {e}")
     # Web 服务主线程
     log(f"🌐 Web UI 已启动 (port {port})")
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)

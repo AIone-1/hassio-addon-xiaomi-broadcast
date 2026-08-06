@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 (2026-08-06)
+
+- 🔘 播报开关改为"控制开关"：`input_boolean.xiao_ai_bo_bao_kai_guan`（小爱播报开关），on=允许播报 / off=停用。定时+手动播报前检查，off 则跳过（不再自动复位）
+- ✏️ 修复传感器配置：①默认传感器删不掉（删除后 CONFIG 不同步）②手动添加/编辑后保存丢失（改用按钮定位删除 + 实时收集）
+- 🗑️ 清理旧"触发开关"实体（`xiao_ai_bo_bao_hong_fa`）
+
 ## 1.1.0 (2026-08-06)
 
 - 🔘 新增触发开关 `input_boolean.xiao_ai_bo_bao_hong_fa`（小爱播报触发）：自动化里 `input_boolean.turn_on` 它 → 立即触发一次播报，播完自动复位
