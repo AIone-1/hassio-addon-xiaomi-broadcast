@@ -105,18 +105,22 @@ def save_edit_cfg(updates):
 
 
 def run_broadcast(summary_type="daily", text_only=False):
-    """在独立线程里跑播报（force=True），用锁与调度串行化防双播。"""
+    """在独立线程里跑播报（force=True）。语音播报用锁防双播；只看文字不发声，不抢锁。"""
     def _run():
-        if not LOCK.acquire(blocking=False):
-            log("⚠️ 已有播报进行中，跳过本次触发")
-            return
+        locked = False
+        if not text_only:
+            if not LOCK.acquire(blocking=False):
+                log("⚠️ 已有语音播报进行中，跳过本次触发")
+                return
+            locked = True
         try:
             log(f"📢 手动触发播报: {summary_type}" + ("（只看文字）" if text_only else ""))
             asyncio.run(ds.main(force=True, text_only=text_only, summary_type=summary_type))
         except Exception as e:
             log(f"❌ 播报出错: {e}")
         finally:
-            LOCK.release()
+            if locked:
+                LOCK.release()
     threading.Thread(target=_run, daemon=True).start()
 
 
@@ -368,13 +372,14 @@ function toggleTheme(){
 })();
 
 var ENTITIES=[], CONFIG={};
+// kw: 关键词数组——只显示实体 id/名称含这些词的（区分温度/湿度/用电等，避免 500+ 混在一起）
 var SECTIONS=[
-  {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'家里各房间温度',domains:['sensor'],room:true},
-  {key:'humidity_sensors',title:'💧 湿度传感器',desc:'家里各房间湿度',domains:['sensor'],room:true},
-  {key:'power_sensors',title:'⚡ 用电（今日电量）',desc:'用 *_power_cost_today 实体（今日累计 kWh）',domains:['sensor'],room:true},
-  {key:'power_now',title:'🔌 实时功率（可选）',desc:'用 *_electric_power 实体（单位 W，高功耗提醒）',domains:['sensor'],room:true},
+  {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'家里各房间温度',domains:['sensor'],kw:['temperature','温度','t2','temp'],room:true},
+  {key:'humidity_sensors',title:'💧 湿度传感器',desc:'家里各房间湿度',domains:['sensor'],kw:['humidity','湿度','relative_humidity'],room:true},
+  {key:'power_sensors',title:'⚡ 用电（今日电量）',desc:'用 *_power_cost_today 实体（今日累计 kWh）',domains:['sensor'],kw:['power_cost_today','今日电量','耗电'],room:true},
+  {key:'power_now',title:'🔌 实时功率（可选）',desc:'用 *_electric_power 实体（单位 W，高功耗提醒）',domains:['sensor'],kw:['electric_power','power','功率'],room:true},
   {key:'lights',title:'💡 灯光',desc:'家里灯，播报\"没关灯\"提醒',domains:['light'],room:true},
-  {key:'doors',title:'🚪 门窗',desc:'on=开，播报安全巡检',domains:['binary_sensor'],room:true},
+  {key:'doors',title:'🚪 门窗',desc:'on=开，播报安全巡检',domains:['binary_sensor'],kw:['contact','门','窗','magnet'],room:true},
   {key:'important_devices',title:'⚠️ 重要设备',desc:'空调/风扇等，离线3天内播报提醒',domains:['climate','fan','media_player','switch'],room:true},
 ];
 
@@ -440,7 +445,7 @@ function renderSections(){
   el.innerHTML=h;
 }
 
-// 搜索某个 section 的实体候选：点开(focus)显示全部，输入关键词过滤（最多 30 个）
+// 搜索某个 section 的实体候选：按 kw 预过滤(区分温度/湿度/用电等) + 点开显示全部 + 输入再过滤（最多 30 个）
 function onSearch(key){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var q=(document.getElementById('search-'+key).value||'').toLowerCase().trim();
@@ -452,6 +457,13 @@ function onSearch(key){
   ENTITIES.forEach(function(e){
     if(sec.domains.indexOf(e.domain)<0) return;
     if(used[e.entity_id]) return;
+    // kw 预过滤：实体 id/名称 必须含某关键词（区分温度/湿度/用电）
+    if(sec.kw){
+      var low=(e.entity_id+' '+(e.name||'')).toLowerCase();
+      var kwHit=false;
+      for(var i=0;i<sec.kw.length;i++){ if(low.indexOf(sec.kw[i])>=0){kwHit=true;break;} }
+      if(!kwHit) return;
+    }
     var hay=(e.entity_id+' '+(e.name||'')).toLowerCase();
     if(!q || hay.indexOf(q)>=0) matches.push(e);
   });
@@ -479,10 +491,17 @@ function pickCandidate(key, eid){
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, i){
+function entryHTML(sec, eid, room, i, editable){
   var ph=sec.room?'房间名':'标签';
+  // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
+  var eidAttr = editable
+    ? 'placeholder=\"填实体 id\" oninput=\"collectEntry(\\''+sec.key+'\\','+i+')\"'
+    : 'readonly';
+  var eidStyle = editable
+    ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
+    : 'flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9';
   return '<div class=\"entry\">'
-    +'<input type=\"text\" value=\"'+esc(eid)+'\" readonly style=\"flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9\">'
+    +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
     +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"collectEntry(\\''+sec.key+'\\','+i+')\">'
     +'<button class=\"del\" onclick=\"delEntry(\\''+sec.key+'\\','+i+')\">✕</button>'
     +'</div>';
@@ -507,7 +526,7 @@ function addEntry(key){
   collectSection(key);
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  box.innerHTML+=entryHTML(sec,'','',box.querySelectorAll('.entry').length);
+  box.innerHTML+=entryHTML(sec,'','',box.querySelectorAll('.entry').length, true);
 }
 
 function delEntry(key,i){
