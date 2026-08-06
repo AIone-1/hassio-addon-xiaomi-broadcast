@@ -117,14 +117,20 @@ function optsFor(domain, cur){
 
 function loadCfgPage(){
   document.getElementById('cfgStatus').textContent='加载中...';
+  // /cfg/ 前缀避免 ingress 下 /api/ 嵌套被 HA 拦截
   Promise.all([
-    fetch(BASE+'api/entities?'+Date.now()).then(function(r){return r.json()}).catch(function(){return[]}),
-    fetch(BASE+'api/config?'+Date.now()).then(function(r){return r.json()}).catch(function(){return{}}),
+    fetch(BASE+'cfg/entities?'+Date.now()).then(function(r){return r.json()}).catch(function(err){return {ok:false,entities:[],error:'请求失败: '+(err&&err.message||'')}}),
+    fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).catch(function(){return{}}),
   ]).then(function(res){
-    ENTITIES=res[0]||[]; CONFIG=res[1]||{};
+    var er=res[0]||{}; CONFIG=res[1]||{};
+    ENTITIES=er.entities||[];
     document.getElementById('cfg-speaker').value=CONFIG.speaker_notify||'';
     renderSections();
-    document.getElementById('cfgStatus').textContent='';
+    if(er.ok){
+      document.getElementById('cfgStatus').textContent='✅ 已加载 '+er.count+' 个实体';
+    }else{
+      document.getElementById('cfgStatus').textContent='❌ 实体加载失败: '+(er.error||'未知错误');
+    }
   });
 }
 
@@ -204,7 +210,7 @@ function saveCfg(){
     doors: CONFIG.doors||{},
     important_devices: CONFIG.important_devices||{},
   };
-  fetch(BASE+'api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
+  fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
     .then(function(r){return r.json()})
     .then(function(d){
       document.getElementById('cfgStatus').textContent = d.ok?'✅ 已保存':'❌ 保存失败';

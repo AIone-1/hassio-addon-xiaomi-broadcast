@@ -43,13 +43,15 @@ def get_webui():
 
 
 def ha_entities():
-    """从 HA 拉全部实体状态列表（供配置页下拉选择）。返回 [{entity_id, name, state, domain}]。"""
+    """从 HA 拉全部实体状态列表（供配置页下拉选择）。返回 {ok, count, entities, error}。"""
     import urllib.request
     try:
         ws, api, token = ds._ha_endpoints()
+        if not token:
+            return {"ok": False, "count": 0, "entities": [], "error": "无 HA token（检查加载项 homeassistant_api 权限）"}
         req = urllib.request.Request(api.rstrip("/") + "/states",
                                      headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             states = json.loads(resp.read())
         out = []
         for s in states:
@@ -60,10 +62,11 @@ def ha_entities():
                 "state": s.get("state", ""),
                 "domain": eid.split(".")[0],
             })
-        return out
+        return {"ok": True, "count": len(out), "entities": out, "error": ""}
     except Exception as e:
-        log(f"⚠️ 拉取 HA 实体失败: {e}")
-        return []
+        err = str(e)
+        log(f"⚠️ 拉取 HA 实体失败: {err}")
+        return {"ok": False, "count": 0, "entities": [], "error": err}
 
 
 # 配置页可编辑的实体映射段（key → 配置 JSON 里的顶层键）
@@ -174,9 +177,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, STATE_FILE.read_text(), "application/json")
             except Exception:
                 self._send(200, json.dumps({"status": "idle"}), "application/json")
-        elif path == "/api/entities":
+        elif path in ("/cfg/entities", "/api/entities"):
+            # /cfg/ 是新路径（避免 ingress 下 /api/ 嵌套被 HA 拦截）；/api/ 兼容旧版
             self._send(200, json.dumps(ha_entities(), ensure_ascii=False), "application/json")
-        elif path == "/api/config":
+        elif path in ("/cfg/config", "/api/config"):
             self._send(200, json.dumps(load_edit_cfg(), ensure_ascii=False), "application/json")
         else:
             self._send(404, "not found", "text/plain")
@@ -212,7 +216,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": True}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
-        elif path == "/api/config":
+        elif path in ("/cfg/config", "/api/config"):
             try:
                 data = json.loads(self._body() or b"{}")
                 save_edit_cfg(data.get("updates", {}))
@@ -224,54 +228,236 @@ class Handler(BaseHTTPRequestHandler):
 
 
 WEBUI_HTML = """<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang=\"zh-CN\">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta charset=\"UTF-8\">
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">
 <title>小爱每日播报</title>
 <style>
   body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:16px}
   h1{font-size:18px;color:#f0f6fc}
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tab{padding:8px 18px;border-radius:8px;background:#161b22;border:1px solid #30363d;color:#8b949e;cursor:pointer;font-size:14px}
+  .tab.on{background:#1f6feb;color:#fff;border-color:#1f6feb}
   .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;margin-bottom:12px}
-  .row{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+  .row{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center}
   button{padding:10px 16px;border:none;border-radius:8px;background:#1f6feb;color:#fff;font-size:14px;cursor:pointer}
   button:active{opacity:.8}
   button.ghost{background:transparent;border:1px solid #1f6feb;color:#58a6ff}
-  select{padding:8px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d}
+  button.danger{background:transparent;border:1px solid #f85149;color:#f85149;padding:6px 10px;font-size:12px}
+  select{padding:8px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;max-width:320px}
+  input[type=text]{padding:8px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d}
+  .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+  .entry select{flex:1;min-width:200px}
+  .entry input{flex:1;min-width:120px}
+  .entry .del{background:transparent;border:none;color:#f85149;cursor:pointer;font-size:16px}
+  .sec-title{font-size:13px;font-weight:600;color:#f0f6fc;margin-bottom:4px}
+  .sec-desc{font-size:11px;color:#8b949e;margin-bottom:10px}
+  .add{background:transparent;border:1px dashed #30363d;color:#58a6ff;padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
   #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:#0a0e14;padding:10px;border-radius:8px}
   #status{font-size:12px;color:#8b949e}
+  .save-status{font-size:12px;color:#3fb950;min-height:18px;margin-top:8px}
+  .page{display:none}
+  .page.on{display:block}
 </style>
 </head>
 <body>
 <h1>🎙️ 小爱每日播报</h1>
-<div class="card">
-  <div class="row">
-    <select id="type">
-      <option value="daily">📅 每日</option>
-      <option value="weekly">🗓️ 周</option>
-      <option value="monthly">📆 月</option>
-      <option value="yearly">🎆 年</option>
-    </select>
-    <button onclick="trigger(false)">📢 立即播报</button>
-    <button class="ghost" onclick="trigger(true)">📝 只看文字</button>
-    <button class="ghost" onclick="refreshLog()">🔄 刷新日志</button>
+<div class=\"tabs\">
+  <div class=\"tab on\" id=\"tabMain\" onclick=\"showPage('main')\">📢 播报</div>
+  <div class=\"tab\" id=\"tabCfg\" onclick=\"showPage('cfg')\">⚙️ 传感器配置</div>
+</div>
+
+<!-- 播报页 -->
+<div class=\"page on\" id=\"page-main\">
+  <div class=\"card\">
+    <div class=\"row\">
+      <select id=\"type\">
+        <option value=\"daily\">📅 每日</option>
+        <option value=\"weekly\">🗓️ 周</option>
+        <option value=\"monthly\">📆 月</option>
+        <option value=\"yearly\">🎆 年</option>
+      </select>
+      <button onclick=\"trigger(false)\">📢 立即播报</button>
+      <button class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
+      <button class=\"ghost\" onclick=\"refreshLog()\">🔄 刷新日志</button>
+    </div>
+    <div id=\"status\">就绪</div>
   </div>
-  <div id="status">就绪</div>
+  <div class=\"card\">
+    <div id=\"log\">日志加载中...</div>
+  </div>
 </div>
-<div class="card">
-  <div id="log">日志加载中...</div>
+
+<!-- 传感器配置页 -->
+<div class=\"page\" id=\"page-cfg\">
+  <div class=\"card\">
+    <div class=\"sec-title\">🎙️ 播报音箱</div>
+    <div class=\"sec-desc\">小米音箱的 notify 实体（HA 开发工具 → 通知里能看到）</div>
+    <div class=\"row\">
+      <input type=\"text\" id=\"cfg-speaker\" style=\"flex:1\" placeholder=\"notify.xiaomi_xxx_play_text\">
+    </div>
+  </div>
+  <div class=\"card\">
+    <div class=\"sec-title\">🔧 实体映射</div>
+    <div class=\"sec-desc\">从下拉选择你家的传感器实体，填房间名。保存后生效。</div>
+    <div id=\"sections\"></div>
+    <button onclick=\"saveCfg()\" style=\"margin-top:12px;width:100%\">💾 保存配置</button>
+    <div class=\"save-status\" id=\"cfgStatus\"></div>
+  </div>
 </div>
+
 <script>
+// 🔑 ingress 前缀：HA ingress 下页面 URL 是 /api/hassio_ingress/<token>/...
+// 必须用相对路径（基于 location.pathname）而不是写死 /，否则请求打到 HA 主 API
+var BASE = location.pathname.replace(/\\/[^/]*$/, '/');
+var ENTITIES=[], CONFIG={};
+var SECTIONS=[
+  {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'家里各房间温度',domains:['sensor'],room:true},
+  {key:'humidity_sensors',title:'💧 湿度传感器',desc:'家里各房间湿度',domains:['sensor'],room:true},
+  {key:'power_sensors',title:'⚡ 用电（今日电量）',desc:'用 *_power_cost_today 实体（今日累计 kWh）',domains:['sensor'],room:true},
+  {key:'power_now',title:'🔌 实时功率（可选）',desc:'用 *_electric_power 实体（单位 W，高功耗提醒）',domains:['sensor'],room:true},
+  {key:'lights',title:'💡 灯光',desc:'家里灯，播报\"没关灯\"提醒',domains:['light'],room:true},
+  {key:'doors',title:'🚪 门窗',desc:'on=开，播报安全巡检',domains:['binary_sensor'],room:true},
+  {key:'important_devices',title:'⚠️ 重要设备',desc:'空调/风扇等，离线3天内播报提醒',domains:['climate','fan','media_player','switch'],room:true},
+];
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}
+
+function showPage(p){
+  document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
+  document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
+  document.getElementById('page-main').className='page'+(p==='main'?' on':'');
+  document.getElementById('page-cfg').className='page'+(p==='cfg'?' on':'');
+  if(p==='cfg'){ loadCfgPage(); }
+}
+
+function optsFor(domain, cur){
+  var h='';
+  ENTITIES.forEach(function(e){
+    if(e.domain===domain || domain.indexOf(e.domain)>=0){
+      var sel=(e.entity_id===cur)?' selected':'';
+      var label=e.name?e.name+' ('+e.entity_id+')':e.entity_id;
+      h+='<option value=\"'+esc(e.entity_id)+'\"'+sel+'>'+esc(label)+'</option>';
+    }
+  });
+  return h;
+}
+
+function loadCfgPage(){
+  document.getElementById('cfgStatus').textContent='加载中...';
+  // /cfg/ 前缀避免 ingress 下 /api/ 嵌套被 HA 拦截
+  Promise.all([
+    fetch(BASE+'cfg/entities?'+Date.now()).then(function(r){return r.json()}).catch(function(err){return {ok:false,entities:[],error:'请求失败: '+(err&&err.message||'')}}),
+    fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).catch(function(){return{}}),
+  ]).then(function(res){
+    var er=res[0]||{}; CONFIG=res[1]||{};
+    ENTITIES=er.entities||[];
+    document.getElementById('cfg-speaker').value=CONFIG.speaker_notify||'';
+    renderSections();
+    if(er.ok){
+      document.getElementById('cfgStatus').textContent='✅ 已加载 '+er.count+' 个实体';
+    }else{
+      document.getElementById('cfgStatus').textContent='❌ 实体加载失败: '+(er.error||'未知错误');
+    }
+  });
+}
+
+function renderSections(){
+  var el=document.getElementById('sections');
+  var h='';
+  SECTIONS.forEach(function(sec){
+    var items=CONFIG[sec.key]||{};
+    var entries=[];
+    for(var k in items){ if(k!=='_note') entries.push([k,items[k]]); }
+    h+='<div class=\"sec-title\" style=\"margin-top:12px\">'+sec.title+'</div>';
+    h+='<div class=\"sec-desc\">'+sec.desc+'</div>';
+    h+='<div id=\"sec-'+sec.key+'\">';
+    entries.forEach(function(pair,i){
+      h+=entryHTML(sec, pair[0], pair[1], i);
+    });
+    h+='</div>';
+    h+='<button class=\"add\" onclick=\"addEntry(\\''+sec.key+'\\')\">+ 添加</button>';
+  });
+  el.innerHTML=h;
+}
+
+function entryHTML(sec, eid, room, i){
+  var ph=sec.room?'房间名':'标签';
+  return '<div class=\"entry\">'
+    +'<select onchange=\"collectEntry(\\''+sec.key+'\\','+i+')\">'+optsFor(sec.domains[0], eid)+'</select>'
+    +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"collectEntry(\\''+sec.key+'\\','+i+')\">'
+    +'<button class=\"del\" onclick=\"delEntry(\\''+sec.key+'\\','+i+')\">✕</button>'
+    +'</div>';
+}
+
+// 收集每段当前条目到 CONFIG
+function collectSection(key){
+  var box=document.getElementById('sec-'+key);
+  if(!box) return;
+  var out={};
+  box.querySelectorAll('.entry').forEach(function(e){
+    var eid=e.querySelector('select').value;
+    var room=e.querySelector('input').value.trim();
+    if(eid) out[eid]=room;
+  });
+  CONFIG[key]=out;
+}
+
+function addEntry(key){
+  collectSection(key);
+  var sec=SECTIONS.filter(function(s){return s.key===key})[0];
+  var box=document.getElementById('sec-'+key);
+  box.innerHTML+=entryHTML(sec,'','',box.querySelectorAll('.entry').length);
+}
+
+function delEntry(key,i){
+  collectSection(key);
+  var box=document.getElementById('sec-'+key);
+  var entries=box.querySelectorAll('.entry');
+  if(entries[i]) entries[i].remove();
+  // 重新编号 onchange 的索引
+  box.querySelectorAll('.entry').forEach(function(e,j){
+    e.querySelector('select').setAttribute('onchange','collectEntry(\\''+key+'\\','+j+')');
+  });
+}
+
+function collectEntry(key,i){
+  collectSection(key);
+}
+
+function saveCfg(){
+  document.getElementById('cfgStatus').textContent='保存中...';
+  SECTIONS.forEach(function(sec){ collectSection(sec.key); });
+  var updates={
+    speaker_notify: document.getElementById('cfg-speaker').value.trim(),
+    temp_sensors: CONFIG.temp_sensors||{},
+    humidity_sensors: CONFIG.humidity_sensors||{},
+    power_sensors: CONFIG.power_sensors||{},
+    power_now: CONFIG.power_now||{},
+    lights: CONFIG.lights||{},
+    doors: CONFIG.doors||{},
+    important_devices: CONFIG.important_devices||{},
+  };
+  fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      document.getElementById('cfgStatus').textContent = d.ok?'✅ 已保存':'❌ 保存失败';
+    })
+    .catch(function(){document.getElementById('cfgStatus').textContent='❌ 保存失败';});
+}
+
+/* ─── 播报页 ─── */
 function trigger(textOnly){
   var t=document.getElementById('type').value;
-  fetch('/trigger?type='+t+(textOnly?'&text_only=true':'')+Date.now(),{method:'POST'})
+  fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
     .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
   setTimeout(refreshLog,1000);
 }
 function refreshLog(){
-  fetch('/logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
+  fetch(BASE+'logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
     document.getElementById('log').textContent=(a||[]).join('\\n')||'暂无日志';
     document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;
   });
