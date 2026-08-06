@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# 强制北京时间（HAOS 容器时区可能不是 Asia/Shanghai，datetime.now() 会偏）
+export TZ="Asia/Shanghai"
+
 DATA_DIR="/share/xiaomi_broadcast"
 mkdir -p "$DATA_DIR" /data/markers
 

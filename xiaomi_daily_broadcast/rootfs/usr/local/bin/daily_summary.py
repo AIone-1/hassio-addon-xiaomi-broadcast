@@ -1263,7 +1263,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # 鼓励语根根据时间选：早上说早安、晚上说晚安
         encouragement = pick_time(config.get("encouragements", []), h, seed)
         if encouragement:
-            lines.append(encouragement)
+            # 🐛 去掉鼓励语里的时间段问候前缀（"早上好/上午好/中午好/下午好/晚上好"），
+            # 避免和开头问候语重复（如"下午好...下午好！坚持住"）
+            import re as _re
+            encouragement = _re.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', encouragement)
+            if encouragement:
+                lines.append(encouragement)
         # 小贴士也按时间段
         tip = pick_time(config.get("daily_tips", []), h, seed)
         report["tip"] = tip

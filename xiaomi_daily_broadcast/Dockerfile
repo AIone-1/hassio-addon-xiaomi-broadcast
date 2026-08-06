@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
 # Alpine 基础镜像自带 python3；用 venv 避免 PEP668 对系统 pip 的干扰
-RUN apk add --no-cache python3 py3-pip ca-certificates \
+RUN apk add --no-cache python3 py3-pip ca-certificates tzdata \
     && python3 -m venv /opt/daily-venv \
     && /opt/daily-venv/bin/pip install --no-cache-dir websockets==13.1
 

@@ -402,6 +402,7 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.ghost{background:transparent;border:1px solid var(--accent);color:var(--accent2)}
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
+  #type{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -455,7 +456,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class=\"page on\" id=\"page-main\">
   <div class=\"card\">
     <div class=\"row\">
-      <select id=\"type\" style=\"padding:10px 16px;font-size:14px;border-radius:8px;flex:0 0 auto\">
+      <select id=\"type\">
         <option value=\"daily\">📅 每日</option>
         <option value=\"weekly\">🗓️ 周</option>
         <option value=\"monthly\">📆 月</option>
@@ -857,7 +858,15 @@ function histPick(ds){
     if(!entries.length){list.innerHTML='<div style=\"color:var(--dim)\">当天暂无播报</div>';return;}
     var tb={'daily':'日报','weekly':'周报','monthly':'月报','yearly':'年报'};
     var tc={'daily':'tb-daily','weekly':'tb-weekly','monthly':'tb-monthly','yearly':'tb-yearly'};
-    var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">'+ds+' · '+entries.length+'次播报</div>';
+    // 统计各类型次数
+    var typeOrder=['daily','weekly','monthly','yearly'];
+    var cnt={daily:0,weekly:0,monthly:0,yearly:0};
+    entries.forEach(function(e){cnt[e.type||'daily']=(cnt[e.type||'daily']||0)+1;});
+    var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">'+ds+' · '+entries.length+'次播报';
+    typeOrder.forEach(function(t){
+      if(cnt[t]>0) h+=' <span class=\"type-badge '+tc[t]+'\">'+tb[t]+' '+cnt[t]+'</span>';
+    });
+    h+='</div>';
     entries.forEach(function(e,i){
       var t=e.type||'daily';
       h+='<div class=\"hist-entry\" onclick=\"histView(\\''+ds+'\\','+i+')\">';

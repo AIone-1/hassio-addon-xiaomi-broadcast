@@ -39,14 +39,26 @@
     "climate.your_ac": "空调"
   },
   "encouragements": {
-    "morning": ["早上好！新的一天开始了，今天也要加油哦。"],
-    "afternoon": ["下午好！坚持住，很快就下班啦。"],
-    "evening": ["晚上好！辛苦了，早点休息吧。"]
+    "morning": [
+      "新的一天开始了，今天也要加油哦。"
+    ],
+    "afternoon": [
+      "坚持住，很快就下班啦。"
+    ],
+    "evening": [
+      "辛苦了，早点休息吧。"
+    ]
   },
   "daily_tips": {
-    "morning": ["出门记得带钥匙和手机。"],
-    "afternoon": ["下午记得多喝水，保持好状态。"],
-    "evening": ["睡前别看太久的手机哦。"]
+    "morning": [
+      "出门记得带钥匙和手机。"
+    ],
+    "afternoon": [
+      "下午记得多喝水，保持好状态。"
+    ],
+    "evening": [
+      "睡前别看太久的手机哦。"
+    ]
   },
   "engine": {
     "mode": "template",
