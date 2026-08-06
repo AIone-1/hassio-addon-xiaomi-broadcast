@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 (2026-08-06)
+
+- 🔘 播报按钮：`input_button.xiao_ai_bo_bao_an_niu`（小爱播报按钮），自动化里 `input_button.press` → 触发一次语音播报（按钮按完自动回弹）
+- 🗑️ 移除"控制开关"（input_boolean 语义不符），删旧实体
+- 🎙️ 播报音箱改为下拉框：列出所有 notify. 音箱实体直接选
+- 🔍 搜索候选：点击空白处 / 手动添加时自动收回
+
 ## 1.1.1 (2026-08-06)
 
 - 🔘 播报开关改为"控制开关"：`input_boolean.xiao_ai_bo_bao_kai_guan`（小爱播报开关），on=允许播报 / off=停用。定时+手动播报前检查，off 则跳过（不再自动复位）

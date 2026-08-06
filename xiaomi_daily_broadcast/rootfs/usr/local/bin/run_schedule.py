@@ -140,7 +140,7 @@ def save_edit_cfg(updates):
     return cfg
 
 
-CONTROL_ENTITY = "input_boolean.xiao_ai_bo_bao_kai_guan"
+BUTTON_ENTITY = "input_button.xiao_ai_bo_bao_an_niu"
 
 
 def _ws_connect():
@@ -152,29 +152,8 @@ def _ws_connect():
     return ws_url, token
 
 
-def _ws_state(entity_id):
-    """查一个实体当前状态。"""
-    import websockets
-    ws_url, token = _ws_connect()
-    async def _get():
-        async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
-            await ws.recv()
-            await ws.send(json.dumps({"type": "auth", "access_token": token}))
-            await ws.recv()
-            await ws.send(json.dumps({"type": "get_states", "id": 1}))
-            r = json.loads(await ws.recv())
-            for s in r.get("result", []):
-                if s.get("entity_id") == entity_id:
-                    return s.get("state", "unavailable")
-            return "unavailable"
-    try:
-        return asyncio.run(_get())
-    except Exception:
-        return "unavailable"
-
-
-def ensure_control_entity():
-    """确保播报总开关存在（input_boolean.xiao_ai_bo_bao_kai_guan）。on=允许播报，off=停用。"""
+def ensure_button_entity():
+    """确保播报按钮存在（input_button.xiao_ai_bo_bao_an_niu）。按一下触发一次播报。"""
     import websockets
     try:
         ws_url, token = _ws_connect()
@@ -186,35 +165,61 @@ def ensure_control_entity():
                 await ws.send(json.dumps({"type": "get_states", "id": 1}))
                 r = json.loads(await ws.recv())
                 for s in r.get("result", []):
-                    if s.get("entity_id") == CONTROL_ENTITY:
+                    if s.get("entity_id") == BUTTON_ENTITY:
                         return True
                 return False
         if asyncio.run(_check()):
-            log("✅ 播报开关已存在: " + CONTROL_ENTITY)
+            log("✅ 播报按钮已存在: " + BUTTON_ENTITY)
             return True
         async def _create():
             async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
                 await ws.recv()
                 await ws.send(json.dumps({"type": "auth", "access_token": token}))
                 await ws.recv()
-                await ws.send(json.dumps({"id": 1, "type": "input_boolean/create",
-                                          "name": "小爱播报开关", "icon": "mdi:power"}))
+                await ws.send(json.dumps({"id": 1, "type": "input_button/create",
+                                          "name": "小爱播报按钮", "icon": "mdi:volume-high"}))
                 r = json.loads(await ws.recv())
                 return r.get("success", False)
         ok = asyncio.run(_create())
-        log(("✅ 已创建播报开关: " + CONTROL_ENTITY) if ok else "⚠️ 播报开关创建失败")
+        log(("✅ 已创建播报按钮: " + BUTTON_ENTITY) if ok else "⚠️ 播报按钮创建失败")
         return ok
     except Exception as e:
-        log(f"⚠️ 创建播报开关失败: {e}")
+        log(f"⚠️ 创建播报按钮失败: {e}")
         return False
 
 
-def broadcast_enabled():
-    """播报总开关是否开启（on=允许播报，off=停用）。查不到时默认允许。"""
-    st = _ws_state(CONTROL_ENTITY)
-    if st == "off":
-        return False
-    return True
+def button_watcher():
+    """监听播报按钮：被 press 时触发一次语音播报。按钮按完自动回弹，无需复位。"""
+    import websockets
+    last = None
+    log("🔔 播报按钮监听已启动")
+    while True:
+        try:
+            ws_url, token = _ws_connect()
+            async def _get():
+                async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                    await ws.recv()
+                    await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                    await ws.recv()
+                    await ws.send(json.dumps({"type": "get_states", "id": 1}))
+                    r = json.loads(await ws.recv())
+                    for s in r.get("result", []):
+                        if s.get("entity_id") == BUTTON_ENTITY:
+                            return s.get("state", "unavailable")
+                    return "unavailable"
+            state = asyncio.run(_get())
+            # 首次轮询只同步 last，不触发（避免启动误触发）
+            if last is None:
+                last = state
+                continue
+            # input_button 的 state 是最后按下时间戳，变化 = 被按过
+            if state != last and state not in ("", "unavailable", "unknown", None) and last not in ("", "unavailable", "unknown", None):
+                log("🔔 播报按钮被按下，触发播报")
+                run_broadcast(summary_type="daily", text_only=False)
+            last = state
+        except Exception as e:
+            log(f"⚠️ 播报按钮监听错误: {e}")
+        time.sleep(2)
 
 
 def run_broadcast(summary_type="daily", text_only=False):
@@ -227,9 +232,6 @@ def run_broadcast(summary_type="daily", text_only=False):
                 return
             locked = True
         try:
-            if not broadcast_enabled():
-                log("⏸️ 播报开关已关闭，跳过播报")
-                return
             log(f"📢 手动触发播报: {summary_type}" + ("（只看文字）" if text_only else ""))
             asyncio.run(ds.main(force=True, text_only=text_only, summary_type=summary_type))
         except Exception as e:
@@ -253,9 +255,6 @@ def scheduler_loop():
                 today = datetime.now().strftime("%Y-%m-%d")
                 if last.get(key) != today:
                     last[key] = today
-                    if not broadcast_enabled():
-                        log("⏸️ 播报开关已关闭，跳过定时播报")
-                        continue
                     log(f"⏰ 到点播报: {st}")
                     if not LOCK.acquire(blocking=False):
                         log("⚠️ 已有播报进行中，跳过定时触发")
@@ -480,9 +479,9 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class=\"page\" id=\"page-cfg\">
   <div class=\"card\">
     <div class=\"sec-title\">🎙️ 播报音箱</div>
-    <div class=\"sec-desc\">小米音箱的 notify 实体（HA 开发工具 → 通知里能看到）</div>
+    <div class=\"sec-desc\">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
     <div class=\"row\">
-      <input type=\"text\" id=\"cfg-speaker\" style=\"flex:1\" placeholder=\"notify.xiaomi_xxx_play_text\">
+      <select id=\"cfg-speaker\" style=\"flex:1;max-width:none\"></select>
     </div>
   </div>
   <div class=\"card\">
@@ -571,6 +570,23 @@ function optsFor(domain, cur){
   return h;
 }
 
+// 填充音箱下拉：列出所有 notify. 实体（可播报的音箱）
+function fillSpeakerSelect(cur){
+  var sel=document.getElementById('cfg-speaker');
+  var opts=[];
+  ENTITIES.forEach(function(e){
+    if(e.domain==='notify') opts.push(e);
+  });
+  if(!opts.length){ sel.innerHTML='<option value=\"\">(未找到 notify 实体)</option>'; return; }
+  var h='<option value=\"\">选择音箱...</option>';
+  opts.forEach(function(e){
+    var name=e.name?e.name+' ('+e.entity_id+')':e.entity_id;
+    var selFlag=(e.entity_id===cur)?' selected':'';
+    h+='<option value=\"'+esc(e.entity_id)+'\"'+selFlag+'>'+esc(name)+'</option>';
+  });
+  sel.innerHTML=h;
+}
+
 function loadCfgPage(){
   document.getElementById('cfgStatus').textContent='加载中...';
   // /cfg/ 前缀避免 ingress 下 /api/ 嵌套被 HA 拦截
@@ -580,7 +596,7 @@ function loadCfgPage(){
   ]).then(function(res){
     var er=res[0]||{}; CONFIG=res[1]||{};
     ENTITIES=er.entities||[];
-    document.getElementById('cfg-speaker').value=CONFIG.speaker_notify||'';
+    fillSpeakerSelect(CONFIG.speaker_notify||'');
     renderSections();
     if(er.ok){
       document.getElementById('cfgStatus').textContent='✅ 已加载 '+er.count+' 个实体';
@@ -686,12 +702,31 @@ function collectSection(key){
   CONFIG[key]=out;
 }
 
-// 手动添加：追加一个可编辑空条目（实体 id + 房间名都可填）
+// 手动添加：追加一个可编辑空条目（实体 id + 房间名都可填），收回搜索候选
 function addEntry(key){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
   box.insertAdjacentHTML('beforeend', entryHTML(sec,'','',true));
+  hideAllCands();
 }
+
+// 收回所有搜索候选区
+function hideAllCands(){
+  SECTIONS.forEach(function(s){
+    var c=document.getElementById('cand-'+s.key);
+    if(c) c.innerHTML='';
+    var si=document.getElementById('search-'+s.key);
+    if(si) si.value='';
+  });
+}
+// 点击页面空白处收回候选（点击非搜索框/非候选区域）
+document.addEventListener('click',function(ev){
+  if(ev.target && ev.target.id && ev.target.id.indexOf('search-')===0) return;
+  if(ev.target && ev.target.closest && ev.target.closest('#page-cfg')) {
+    // 在配置页内但不在搜索框上
+    hideAllCands();
+  }
+});
 
 // 手动条目实体 id 输入：同步更新 CONFIG（去掉空实体 id）
 function manualEid(el,key){
@@ -716,7 +751,7 @@ function saveCfg(){
   document.getElementById('cfgStatus').textContent='保存中...';
   SECTIONS.forEach(function(sec){ collectSection(sec.key); });
   var updates={
-    speaker_notify: document.getElementById('cfg-speaker').value.trim(),
+    speaker_notify: document.getElementById('cfg-speaker').value,
     temp_sensors: CONFIG.temp_sensors||{},
     humidity_sensors: CONFIG.humidity_sensors||{},
     power_sensors: CONFIG.power_sensors||{},
@@ -861,11 +896,12 @@ def main():
     port = int(os.environ.get("INGRESS_PORT") or os.environ.get("PORT") or "8099")
     # 调度循环在独立线程
     threading.Thread(target=scheduler_loop, daemon=True).start()
-    # 播报总开关：创建（on=允许播报，off=停用）
+    # 播报按钮：创建 + 监听（按下触发播报）
     try:
-        ensure_control_entity()
+        ensure_button_entity()
+        threading.Thread(target=button_watcher, daemon=True).start()
     except Exception as e:
-        log(f"⚠️ 播报开关初始化失败: {e}")
+        log(f"⚠️ 播报按钮初始化失败: {e}")
     # Web 服务主线程
     log(f"🌐 Web UI 已启动 (port {port})")
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
