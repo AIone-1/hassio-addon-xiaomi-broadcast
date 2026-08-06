@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
 # Alpine 基础镜像自带 python3；用 venv 避免 PEP668 对系统 pip 的干扰
