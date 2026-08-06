@@ -1,0 +1,82 @@
+name: "小爱每日播报"
+version: "1.0.0"
+slug: "xiaomi_daily_broadcast"
+description: >-
+  定时把家里传感器状态生成中文播报稿，推送到小米音箱朗读。
+  支持每日播报与周/月/年周期总结，大模型引擎直连 DeepSeek。
+url: "https://github.com/AIone-1/hassio-addon-xiaomi-broadcast"
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+hassio_role: default
+ingress: true
+ingress_port: 8099
+ingress_entry: "/"
+panel_icon: "mdi:volume-high"
+panel_title: "小爱每日播报"
+map:
+  - share:rw
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Web UI / 触发接口（HA 自动化可用 rest_command 调用 /trigger）"
+
+options:
+  ha_host: "supervisor"
+  ha_port: 8123
+  ha_token: ""
+  speaker_notify: "notify.xiaomi_cn_484529620_x08a_play_text_a_5_1"
+  tts_speed: 4.5
+  engine_mode: "template"
+  fallback_to_template: true
+  deepseek_api_key: ""
+  deepseek_model: "deepseek-chat"
+  deepseek_base_url: "https://api.deepseek.com/anthropic"
+  broadcast_enabled: true
+  weekday_hour: 21
+  weekend_hour: 18
+  weekly_summary: false
+  weekly_hour: 20
+  weekly_day: 6
+  weekly_also_daily: false
+  monthly_summary: false
+  monthly_hour: 20
+  monthly_day: -1
+  monthly_also_daily: false
+  yearly_summary: false
+  yearly_hour: 20
+  yearly_month: 12
+  yearly_day: 31
+  yearly_also_daily: false
+
+schema:
+  ha_host: "str?"
+  ha_port: "port?"
+  ha_token: "password?"
+  speaker_notify: "str?"
+  tts_speed: "float?"
+  engine_mode: "list(template|llm)?"
+  fallback_to_template: "bool?"
+  deepseek_api_key: "password?"
+  deepseek_model: "str?"
+  deepseek_base_url: "url?"
+  broadcast_enabled: "bool?"
+  weekday_hour: "int(0,23)?"
+  weekend_hour: "int(0,23)?"
+  weekly_summary: "bool?"
+  weekly_hour: "int(0,23)?"
+  weekly_day: "int(0,6)?"
+  weekly_also_daily: "bool?"
+  monthly_summary: "bool?"
+  monthly_hour: "int(0,23)?"
+  monthly_day: "int?"
+  monthly_also_daily: "bool?"
+  yearly_summary: "bool?"
+  yearly_hour: "int(0,23)?"
+  yearly_month: "int(1,12)?"
+  yearly_day: "int(1,31)?"
+  yearly_also_daily: "bool?"

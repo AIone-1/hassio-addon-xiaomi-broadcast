@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>小爱每日播报</title>
+<style>
+  body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:16px}
+  h1{font-size:18px;color:#f0f6fc}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;margin-bottom:12px}
+  .row{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+  button{padding:10px 16px;border:none;border-radius:8px;background:#1f6feb;color:#fff;font-size:14px;cursor:pointer}
+  button:active{opacity:.8}
+  button.ghost{background:transparent;border:1px solid #1f6feb;color:#58a6ff}
+  select{padding:8px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d}
+  #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:#0a0e14;padding:10px;border-radius:8px}
+  #status{font-size:12px;color:#8b949e}
+</style>
+</head>
+<body>
+<h1>🎙️ 小爱每日播报</h1>
+<div class="card">
+  <div class="row">
+    <select id="type">
+      <option value="daily">📅 每日</option>
+      <option value="weekly">🗓️ 周</option>
+      <option value="monthly">📆 月</option>
+      <option value="yearly">🎆 年</option>
+    </select>
+    <button onclick="trigger(false)">📢 立即播报</button>
+    <button class="ghost" onclick="trigger(true)">📝 只看文字</button>
+    <button class="ghost" onclick="refreshLog()">🔄 刷新日志</button>
+  </div>
+  <div id="status">就绪</div>
+</div>
+<div class="card">
+  <div id="log">日志加载中...</div>
+</div>
+<script>
+function trigger(textOnly){
+  var t=document.getElementById('type').value;
+  fetch('/trigger?type='+t+(textOnly?'&text_only=true':'')+Date.now(),{method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
+    .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
+  setTimeout(refreshLog,1000);
+}
+function refreshLog(){
+  fetch('/logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
+    document.getElementById('log').textContent=(a||[]).join('\n')||'暂无日志';
+    document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;
+  });
+}
+setInterval(refreshLog,5000);
+refreshLog();
+</script>
+</body>
+</html>

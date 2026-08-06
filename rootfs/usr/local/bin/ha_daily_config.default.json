@@ -1,0 +1,62 @@
+{
+  "_note": "小爱每日播报 · 实体映射配置。安装后请按自己的设备修改此文件（通过 Samba 访问 /share/xiaomi_broadcast/ 或用加载项网页版）。",
+  "speaker_notify": "notify.your_speaker_entity",
+  "tts_speed": 4.5,
+  "temp_sensors": {
+    "sensor.your_temp_sensor_1": "卧室"
+  },
+  "humidity_sensors": {
+    "sensor.your_humidity_sensor_1": "卧室"
+  },
+  "pm25_sensor": "sensor.your_pm25_sensor",
+  "presence_sensors": [
+    "binary_sensor.your_presence_sensor"
+  ],
+  "power_sensors": {
+    "_note": "全部用 power_cost_today（设备统计的今日电量 kWh），直接读值，不积分推断。",
+    "sensor.your_power_sensor_cost_today": "卧室总电源"
+  },
+  "power_now": {
+    "_note": "实时功率传感器，用于高功耗提醒（单位W）。",
+    "sensor.your_power_sensor_electric_power": "卧室总电源"
+  },
+  "lights": {
+    "light.your_light_1": "客厅主灯"
+  },
+  "doors": {
+    "binary_sensor.your_door_sensor": "大门"
+  },
+  "windows": {},
+  "window_ac_alert": {
+    "ac_entity": "climate.your_ac",
+    "window_entity": "binary_sensor.your_window"
+  },
+  "high_power_alert_w": 200,
+  "todo_lists": {
+    "todo.shopping_list": "购物清单"
+  },
+  "important_devices": {
+    "climate.your_ac": "空调"
+  },
+  "encouragements": {
+    "morning": ["早上好！新的一天开始了，今天也要加油哦。"],
+    "afternoon": ["下午好！坚持住，很快就下班啦。"],
+    "evening": ["晚上好！辛苦了，早点休息吧。"]
+  },
+  "daily_tips": {
+    "morning": ["出门记得带钥匙和手机。"],
+    "afternoon": ["下午记得多喝水，保持好状态。"],
+    "evening": ["睡前别看太久的手机哦。"]
+  },
+  "engine": {
+    "mode": "template",
+    "llm": {
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "api_key": "",
+      "model": "deepseek-chat",
+      "fallback_to_template": true,
+      "max_tokens": 6000
+    }
+  }
+}
