@@ -140,6 +140,96 @@ def save_edit_cfg(updates):
     return cfg
 
 
+TRIGGER_ENTITY = "input_boolean.xiao_ai_bo_bao_hong_fa"
+
+
+def _ws_connect():
+    """建 WS 连接并认证，返回 (ws, token)。"""
+    import websockets
+    ws_url, api, token = ds._ha_endpoints()
+    if not token:
+        raise RuntimeError("无 HA token")
+    return ws_url, token
+
+
+def ensure_trigger_entity():
+    """确保触发开关存在（input_boolean.xiao_ai_bo_bao_hong_fa）。已存在则跳过，避免重复创建堆积。"""
+    import websockets
+    try:
+        ws_url, token = _ws_connect()
+        async def _check():
+            async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                await ws.recv()
+                await ws.send(json.dumps({"type": "get_states", "id": 1}))
+                r = json.loads(await ws.recv())
+                for s in r.get("result", []):
+                    if s.get("entity_id") == TRIGGER_ENTITY:
+                        return True
+                return False
+        if asyncio.run(_check()):
+            log("✅ 触发开关已存在: " + TRIGGER_ENTITY)
+            return True
+        async def _create():
+            async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                await ws.recv()
+                await ws.send(json.dumps({"id": 1, "type": "input_boolean/create",
+                                          "name": "小爱播报触发", "icon": "mdi:volume-high"}))
+                r = json.loads(await ws.recv())
+                return r.get("success", False)
+        ok = asyncio.run(_create())
+        log(("✅ 已创建触发开关: " + TRIGGER_ENTITY) if ok else "⚠️ 触发开关创建失败")
+        return ok
+    except Exception as e:
+        log(f"⚠️ 创建触发开关失败: {e}")
+        return False
+
+
+def trigger_watcher():
+    """监听触发开关：从 off 变 on → 触发一次播报 → 自动复位 off。"""
+    import websockets
+    last = "off"
+    log("🔔 触发开关监听已启动")
+    while True:
+        try:
+            ws_url, token = _ws_connect()
+            async def _get():
+                async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                    await ws.recv()
+                    await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                    await ws.recv()
+                    await ws.send(json.dumps({"type": "get_states", "id": 1}))
+                    r = json.loads(await ws.recv())
+                    for s in r.get("result", []):
+                        if s.get("entity_id") == TRIGGER_ENTITY:
+                            return s.get("state", "unavailable")
+                    return "unavailable"
+            state = asyncio.run(_get())
+            if state == "on" and last == "off":
+                log("🔔 触发开关被打开，触发播报")
+                async def _off():
+                    async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                        await ws.recv()
+                        await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                        await ws.recv()
+                        await ws.send(json.dumps({"type": "call_service", "domain": "input_boolean",
+                                                  "service": "turn_off",
+                                                  "service_data": {"entity_id": TRIGGER_ENTITY}, "id": 2}))
+                        await ws.recv()
+                try:
+                    asyncio.run(_off())
+                except Exception:
+                    pass
+                run_broadcast(summary_type="daily", text_only=False)
+            last = state
+        except Exception as e:
+            log(f"⚠️ 触发开关监听错误: {e}")
+        time.sleep(2)
+
+
 def run_broadcast(summary_type="daily", text_only=False):
     """在独立线程里跑播报（force=True）。语音播报用锁防双播；只看文字不发声，不抢锁。"""
     def _run():
@@ -772,6 +862,12 @@ def main():
     port = int(os.environ.get("INGRESS_PORT") or os.environ.get("PORT") or "8099")
     # 调度循环在独立线程
     threading.Thread(target=scheduler_loop, daemon=True).start()
+    # 触发开关：创建 + 监听（自动化 turn_on 触发播报）
+    try:
+        ensure_trigger_entity()
+        threading.Thread(target=trigger_watcher, daemon=True).start()
+    except Exception as e:
+        log(f"⚠️ 触发开关初始化失败: {e}")
     # Web 服务主线程
     log(f"🌐 Web UI 已启动 (port {port})")
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
