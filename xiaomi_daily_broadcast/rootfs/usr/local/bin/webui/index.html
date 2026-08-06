@@ -25,6 +25,9 @@
   .sec-title{font-size:13px;font-weight:600;color:#f0f6fc;margin-bottom:4px}
   .sec-desc{font-size:11px;color:#8b949e;margin-bottom:10px}
   .add{background:transparent;border:1px dashed #30363d;color:#58a6ff;padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
+  .search-row{margin:8px 0}
+  .search-row input{width:100%;padding:8px 10px;border-radius:6px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d}
+  .search-row input:focus{border-color:#1f6feb;outline:none}
   #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:#0a0e14;padding:10px;border-radius:8px}
   #status{font-size:12px;color:#8b949e}
   .save-status{font-size:12px;color:#3fb950;min-height:18px;margin-top:8px}
@@ -54,6 +57,10 @@
       <button class="ghost" onclick="refreshLog()">🔄 刷新日志</button>
     </div>
     <div id="status">就绪</div>
+  </div>
+  <div class="card" id="textCard" style="display:none">
+    <div class="sec-title">📝 播报文字</div>
+    <div id="textOut" style="font-size:14px;line-height:1.8;white-space:pre-wrap"></div>
   </div>
   <div class="card">
     <div id="log">日志加载中...</div>
@@ -143,20 +150,61 @@ function renderSections(){
     for(var k in items){ if(k!=='_note') entries.push([k,items[k]]); }
     h+='<div class="sec-title" style="margin-top:12px">'+sec.title+'</div>';
     h+='<div class="sec-desc">'+sec.desc+'</div>';
+    h+='<div class="search-row"><input type="text" placeholder="🔍 搜索实体（如 卧室 温度 / 传感器id）" oninput="onSearch(\''+sec.key+'\')" id="search-'+sec.key+'"></div>';
     h+='<div id="sec-'+sec.key+'">';
     entries.forEach(function(pair,i){
       h+=entryHTML(sec, pair[0], pair[1], i);
     });
     h+='</div>';
-    h+='<button class="add" onclick="addEntry(\''+sec.key+'\')">+ 添加</button>';
+    h+='<div id="cand-'+sec.key+'"></div>';
+    h+='<button class="add" onclick="addEntry(\''+sec.key+'\')">+ 手动添加</button>';
   });
   el.innerHTML=h;
+}
+
+// 搜索某个 section 的实体候选（匹配则显示，最多 30 个）
+function onSearch(key){
+  var sec=SECTIONS.filter(function(s){return s.key===key})[0];
+  var q=(document.getElementById('search-'+key).value||'').toLowerCase().trim();
+  var box=document.getElementById('cand-'+key);
+  if(!q){ box.innerHTML=''; return; }
+  var used={};
+  var box2=document.getElementById('sec-'+key);
+  if(box2) box2.querySelectorAll('.entry select').forEach(function(s){used[s.value]=true;});
+  var matches=[];
+  ENTITIES.forEach(function(e){
+    if(sec.domains.indexOf(e.domain)<0) return;
+    if(used[e.entity_id]) return;
+    var hay=(e.entity_id+' '+(e.name||'')).toLowerCase();
+    if(hay.indexOf(q)>=0) matches.push(e);
+  });
+  if(!matches.length){ box.innerHTML='<div style="color:#8b949e;font-size:12px;padding:6px 0">无匹配实体</div>'; return; }
+  var h='<div style="font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px">匹配 '+matches.length+' 个（点击选择）</div>';
+  var shown=0;
+  matches.forEach(function(e){
+    if(shown>=30) return; shown++;
+    var label=(e.name?e.name+' — ':'')+e.entity_id;
+    h+='<div style="padding:7px 10px;margin-bottom:3px;border-radius:6px;background:#0d1117;border:1px solid #30363d;cursor:pointer;font-size:12px" onclick="pickCandidate(\''+key+'\',\''+e.entity_id+'\')">🔗 '+esc(label)+'</div>';
+  });
+  if(matches.length>30) h+='<div style="color:#8b949e;font-size:11px;padding:4px 0">仅显示前 30 个，输入更多关键词缩小范围</div>';
+  box.innerHTML=h;
+}
+
+// 点击候选实体 → 添加到该 section 映射（房间名空，用户填）
+function pickCandidate(key, eid){
+  collectSection(key);
+  var sec=SECTIONS.filter(function(s){return s.key===key})[0];
+  var box=document.getElementById('sec-'+key);
+  var idx=box.querySelectorAll('.entry').length;
+  box.innerHTML+=entryHTML(sec, eid, '', idx);
+  document.getElementById('cand-'+key).innerHTML='';
+  var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
 function entryHTML(sec, eid, room, i){
   var ph=sec.room?'房间名':'标签';
   return '<div class="entry">'
-    +'<select onchange="collectEntry(\''+sec.key+'\','+i+')">'+optsFor(sec.domains[0], eid)+'</select>'
+    +'<input type="text" value="'+esc(eid)+'" readonly style="flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9">'
     +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="collectEntry(\''+sec.key+'\','+i+')">'
     +'<button class="del" onclick="delEntry(\''+sec.key+'\','+i+')">✕</button>'
     +'</div>';
@@ -168,8 +216,10 @@ function collectSection(key){
   if(!box) return;
   var out={};
   box.querySelectorAll('.entry').forEach(function(e){
-    var eid=e.querySelector('select').value;
-    var room=e.querySelector('input').value.trim();
+    // 第一个 input 是实体 id（readonly），第二个是房间名
+    var ins=e.querySelectorAll('input');
+    var eid=(ins[0]&&ins[0].value||'').trim();
+    var room=(ins[1]&&ins[1].value||'').trim();
     if(eid) out[eid]=room;
   });
   CONFIG[key]=out;
@@ -187,10 +237,6 @@ function delEntry(key,i){
   var box=document.getElementById('sec-'+key);
   var entries=box.querySelectorAll('.entry');
   if(entries[i]) entries[i].remove();
-  // 重新编号 onchange 的索引
-  box.querySelectorAll('.entry').forEach(function(e,j){
-    e.querySelector('select').setAttribute('onchange','collectEntry(\''+key+'\','+j+')');
-  });
 }
 
 function collectEntry(key,i){
@@ -225,7 +271,29 @@ function trigger(textOnly){
     .then(function(r){return r.json()})
     .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
+  if(textOnly){ showTextCard(); }
   setTimeout(refreshLog,1000);
+}
+function showTextCard(){
+  document.getElementById('textCard').style.display='block';
+  document.getElementById('textOut').textContent='生成中...';
+  pollText();
+}
+function pollText(){
+  fetch(BASE+'state?'+Date.now()).then(function(r){return r.json()}).then(function(st){
+    var card=document.getElementById('textCard');
+    var out=document.getElementById('textOut');
+    if(st.status==='preparing'||st.status==='broadcasting'){
+      if(st.phase) out.textContent=st.phase+'...';
+      var ss=st.sentences||[];
+      if(ss.length) out.textContent=ss.map(function(s){return s.text}).join('\n');
+      setTimeout(pollText,1000);
+    }else if(st.status==='done'){
+      var all=st.sentences||[];
+      if(all.length) out.textContent=all.map(function(s){return s.text}).join('\n');
+      else out.textContent='(无文字内容)';
+    }
+  }).catch(function(){});
 }
 function refreshLog(){
   fetch(BASE+'logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
