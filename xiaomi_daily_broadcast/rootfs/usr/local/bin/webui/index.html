@@ -79,6 +79,9 @@
 </div>
 
 <script>
+// 🔑 ingress 前缀：HA ingress 下页面 URL 是 /api/hassio_ingress/<token>/...
+// 必须用相对路径（基于 location.pathname）而不是写死 /，否则请求打到 HA 主 API
+var BASE = location.pathname.replace(/\/[^/]*$/, '/');
 var ENTITIES=[], CONFIG={};
 var SECTIONS=[
   {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'家里各房间温度',domains:['sensor'],room:true},
@@ -115,8 +118,8 @@ function optsFor(domain, cur){
 function loadCfgPage(){
   document.getElementById('cfgStatus').textContent='加载中...';
   Promise.all([
-    fetch('/api/entities?'+Date.now()).then(function(r){return r.json()}).catch(function(){return[]}),
-    fetch('/api/config?'+Date.now()).then(function(r){return r.json()}).catch(function(){return{}}),
+    fetch(BASE+'api/entities?'+Date.now()).then(function(r){return r.json()}).catch(function(){return[]}),
+    fetch(BASE+'api/config?'+Date.now()).then(function(r){return r.json()}).catch(function(){return{}}),
   ]).then(function(res){
     ENTITIES=res[0]||[]; CONFIG=res[1]||{};
     document.getElementById('cfg-speaker').value=CONFIG.speaker_notify||'';
@@ -201,7 +204,7 @@ function saveCfg(){
     doors: CONFIG.doors||{},
     important_devices: CONFIG.important_devices||{},
   };
-  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
+  fetch(BASE+'api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
     .then(function(r){return r.json()})
     .then(function(d){
       document.getElementById('cfgStatus').textContent = d.ok?'✅ 已保存':'❌ 保存失败';
@@ -212,14 +215,14 @@ function saveCfg(){
 /* ─── 播报页 ─── */
 function trigger(textOnly){
   var t=document.getElementById('type').value;
-  fetch('/trigger?type='+t+(textOnly?'&text_only=true':'')+Date.now(),{method:'POST'})
+  fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
     .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
   setTimeout(refreshLog,1000);
 }
 function refreshLog(){
-  fetch('/logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
+  fetch(BASE+'logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
     document.getElementById('log').textContent=(a||[]).join('\n')||'暂无日志';
     document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;
   });
