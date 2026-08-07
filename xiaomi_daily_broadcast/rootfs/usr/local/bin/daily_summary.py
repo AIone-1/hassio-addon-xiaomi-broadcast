@@ -4,7 +4,7 @@
 新增：温度日统计(高/低)、用电分析(排行+预估)、安全强化(多门窗+空调节能)、
       终端任务计数、购物清单+待办事项双清单
 """
-import asyncio, json, websockets, urllib.request, urllib.parse, os, calendar
+import asyncio, json, websockets, urllib.request, urllib.parse, os, calendar, re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
