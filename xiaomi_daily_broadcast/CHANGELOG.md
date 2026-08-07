@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.28 (2026-08-07)
+
+- 🔘 每日按钮改名"小爱播报·日"
+- 🐛 修复实体复制：ingress iframe 里 navigator.clipboard 被禁用，改用临时 textarea + execCommand('copy')
+
 ## 1.1.27 (2026-08-07)
 
 - 🐛 修按钮"第一次按不播"：轮询时间戳改为 WebSocket 订阅 state_changed 事件（实时检测 press，无首轮同步吞掉的问题）

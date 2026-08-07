@@ -142,7 +142,7 @@ def save_edit_cfg(updates):
 
 # 4 个播报按钮：每日/周/月/年。entity_id 由名字拼音生成（创建后按实际 id 更新）
 BUTTONS = [
-    {"type": "daily",   "name": "小爱播报·每日", "entity": "input_button.xiao_ai_bo_bao_mei_ri", "icon": "mdi:calendar-today"},
+    {"type": "daily",   "name": "小爱播报·日", "entity": "input_button.xiao_ai_bo_bao_mei_ri", "icon": "mdi:calendar-today"},
     {"type": "weekly",  "name": "小爱播报·周",   "entity": "input_button.xiao_ai_bo_bao_zhou",  "icon": "mdi:calendar-week"},
     {"type": "monthly", "name": "小爱播报·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
     {"type": "yearly",  "name": "小爱播报·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
@@ -895,7 +895,7 @@ function showEntities(){
   fetch(BASE+'entities/buttons?'+Date.now()).then(function(r){return r.json()}).then(function(list){
     var box=document.getElementById('entitiesBox');
     if(!list || !list.length){ box.innerHTML='<div style=\"color:var(--dim)\">暂无播报按钮实体</div>'; return; }
-    var tb={'daily':'📅 每日','weekly':'🗓️ 周','monthly':'📆 月','yearly':'🎆 年'};
+    var tb={'daily':'📅 日','weekly':'🗓️ 周','monthly':'📆 月','yearly':'🎆 年'};
     var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">播报按钮实体（自动化里可引用，点复制）：</div>';
     list.forEach(function(b){
       h+='<div style=\"padding:8px 10px;margin-bottom:6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer\" onclick=\"copyEntity(\\''+b.entity+'\\')\">'
@@ -913,10 +913,24 @@ function showEntities(){
   });
 }
 function copyEntity(eid){
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(eid).then(function(){document.getElementById('status').textContent='✅ 已复制: '+eid;});
+  // 🔑 修复：ingress iframe 里 navigator.clipboard 被禁用（权限策略），
+  // 改用临时 textarea + document.execCommand('copy')（iframe 里也能用）
+  var ok=false;
+  try{
+    var ta=document.createElement('textarea');
+    ta.value=eid;
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+  }catch(e){ ok=false; }
+  if(ok){
+    document.getElementById('status').textContent='✅ 已复制: '+eid;
   }else{
-    document.getElementById('status').textContent=eid;
+    // fallback：显示可手动复制的文本
+    document.getElementById('status').textContent='复制失败，请手动复制: '+eid;
   }
 }
 /* ─── 历史记录 ─── */
