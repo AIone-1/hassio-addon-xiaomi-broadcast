@@ -697,12 +697,13 @@ def generate_with_llm(report, config):
     else:
         return None
 
-    # 切成句子：按标点断句；过长的句再按逗号拆
+    # 切成句子：按标点断句；过长的句再按逗号拆。
+    # ⚠️ 只丢纯空串，不丢短句——否则"开灯了""温度舒适"等短句会消失导致内容不全
     chunks = re.split(r"[\n。！？!?；;]+", text)
     final = []
     for c in chunks:
         c = c.strip()
-        if not c or len(c) < 4:
+        if not c:
             continue
         if len(c) <= 60:
             final.append(c)
