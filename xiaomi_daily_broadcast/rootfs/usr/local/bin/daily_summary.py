@@ -1361,7 +1361,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
                 # 鼓励语兜底：整个稿子都没出现过鼓励词才补，避免重复
                 enc = pick_time(config.get("encouragements", []), h, seed)
-                enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好")
+                enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好", "坚持")
                 if enc and not any(kw in "".join(lines) for kw in enc_words):
                     # 🐛 同样去问候前缀，避免和 LLM 稿子的问候语重复
                     import re as _re2
