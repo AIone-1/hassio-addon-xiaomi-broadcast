@@ -402,11 +402,16 @@ function saveCfg(){
 
 /* ─── 播报页 ─── */
 var lastTextRun=0;
+// 🔑 按钮互斥高亮：点哪个哪个蓝底，其他恢复灰边
+function setActive(id){
+  ['btnSpeak','btnText','btnClear','btnEntities'].forEach(function(b){
+    document.getElementById(b).className = (b===id) ? 'active' : '';
+  });
+}
 function trigger(textOnly){
   var t=document.getElementById('type').value;
   // 🔑 按钮选中态：点了哪个哪个蓝底白字，另一个普通样式
-  document.getElementById('btnSpeak').className = textOnly ? '' : 'active';
-  document.getElementById('btnText').className = textOnly ? 'active' : '';
+  setActive(textOnly ? 'btnText' : 'btnSpeak');
   lastTextRun=Date.now();  // 🔑 记录本次触发时间，pollText 用它忽略旧状态
   fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+'&_='+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
@@ -464,18 +469,23 @@ function refreshLog(){
   });
 }
 function clearLog(){
-  // 点击高亮，稍后恢复
-  var b=document.getElementById('btnClear'); b.className='active';
-  setTimeout(function(){ b.className=''; }, 500);
+  // 🔑 点击保持选中（蓝底），其他按钮恢复灰边
+  setActive('btnClear');
   fetch(BASE+'logs/clear',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
     document.getElementById('log').textContent='';
   }).catch(function(){document.getElementById('log').textContent='';});
 }
 /* ─── 查看播报按钮实体 ─── */
 function showEntities(){
-  // 点击高亮，稍后恢复
-  var eb=document.getElementById('btnEntities'); eb.className='active';
-  setTimeout(function(){ eb.className=''; }, 500);
+  var box=document.getElementById('entitiesBox');
+  // 🔑 再点一次：如果已打开则关闭 + 按钮恢复灰边
+  if(box && box.style.display==='block'){
+    box.style.display='none';
+    setActive('');  // 清掉所有高亮
+    return;
+  }
+  // 点击高亮，保持选中
+  setActive('btnEntities');
   fetch(BASE+'entities/buttons?'+Date.now()).then(function(r){return r.json()}).then(function(list){
     var box=document.getElementById('entitiesBox');
     if(!list || !list.length){ box.innerHTML='<div style="color:var(--dim)">暂无播报按钮实体</div>'; return; }
@@ -516,9 +526,10 @@ function copyEntity(eid){
     // fallback：显示可手动复制的文本
     document.getElementById('status').textContent='复制失败，请手动复制: '+eid;
   }
-  // 复制后关闭实体弹窗
+  // 复制后关闭实体弹窗 + 按钮恢复灰边
   var box=document.getElementById('entitiesBox');
   if(box) box.style.display='none';
+  setActive('');
 }
 /* ─── 历史记录 ─── */
 var histYM={y:new Date().getFullYear(),m:new Date().getMonth()};
@@ -604,15 +615,15 @@ function loadHist(){ histLoadCal(); }
 
 setInterval(refreshLog,5000);
 refreshLog();
-// 初始默认选中"立即播报"
-document.getElementById('btnSpeak').className='active';
+// 默认全部灰边（不选中任何按钮）
+setActive('');
 // 点击实体框以外区域关闭实体弹窗
 document.addEventListener('click',function(ev){
   var box=document.getElementById('entitiesBox');
   if(box && box.style.display==='block'){
     var inBtn=(ev.target && ev.target.id==='btnEntities');
     var inBox=(ev.target && ev.target.closest && ev.target.closest('#entitiesBox'));
-    if(!inBtn && !inBox) box.style.display='none';
+    if(!inBtn && !inBox){ box.style.display='none'; setActive(''); }
   }
 });
 </script>

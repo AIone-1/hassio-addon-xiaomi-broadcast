@@ -1,5 +1,5 @@
 name: "小爱每日播报"
-version: "1.1.29"
+version: "1.1.30"
 slug: "xiaomi_daily_broadcast"
 description: >-
   定时把家里传感器状态生成中文播报稿，推送到小米音箱朗读。
