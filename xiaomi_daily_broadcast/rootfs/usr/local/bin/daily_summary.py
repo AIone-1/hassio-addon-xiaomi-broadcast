@@ -1362,7 +1362,9 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 # 鼓励语兜底：整个稿子都没出现过鼓励词才补，避免重复
                 enc = pick_time(config.get("encouragements", []), h, seed)
                 enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好", "坚持")
-                if enc and not any(kw in "".join(lines) for kw in enc_words):
+                # 🐛 如果稿子已有收尾句（"就到这里/播报结束"等），不补鼓励语——收尾后不该再有内容
+                _has_ending = any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束"))
+                if enc and not any(kw in "".join(lines) for kw in enc_words) and not _has_ending:
                     # 🐛 同样去问候前缀，避免和 LLM 稿子的问候语重复
                     import re as _re2
                     enc = _re2.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', enc)

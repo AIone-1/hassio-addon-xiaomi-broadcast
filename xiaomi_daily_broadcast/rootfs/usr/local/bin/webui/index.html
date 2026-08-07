@@ -312,7 +312,7 @@ function entryHTML(sec, eid, room, editable){
     : 'readonly';
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
-    : 'flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9';
+    : 'flex:1.4;min-width:180px;background:transparent;border:1px solid var(--border);color:var(--text)';
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="onRoom(this,\''+sec.key+'\')">'

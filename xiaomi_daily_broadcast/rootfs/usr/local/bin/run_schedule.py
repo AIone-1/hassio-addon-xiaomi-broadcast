@@ -142,7 +142,7 @@ def save_edit_cfg(updates):
 
 # 4 个播报按钮：日/周/月/年。entity_id 由名字拼音生成（创建后按实际 id 更新）
 BUTTONS = [
-    {"type": "daily",   "name": "传感器实体·日", "entity": "input_button.xiao_ai_bo_bao_mei_ri", "icon": "mdi:calendar-today"},
+    {"type": "daily",   "name": "传感器实体·日", "entity": "input_button.chuan_gan_qi_shi_ti_ri", "icon": "mdi:calendar-today"},
     {"type": "weekly",  "name": "传感器实体·周",   "entity": "input_button.xiao_ai_bo_bao_zhou",  "icon": "mdi:calendar-week"},
     {"type": "monthly", "name": "传感器实体·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
     {"type": "yearly",  "name": "传感器实体·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
@@ -746,7 +746,7 @@ function entryHTML(sec, eid, room, editable){
     : 'readonly';
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
-    : 'flex:1.4;min-width:180px;background:transparent;border:1px solid #30363d;color:#c9d1d9';
+    : 'flex:1.4;min-width:180px;background:transparent;border:1px solid var(--border);color:var(--text)';
   return '<div class=\"entry\" data-raw=\"'+esc(eid)+'\">'
     +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
     +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
