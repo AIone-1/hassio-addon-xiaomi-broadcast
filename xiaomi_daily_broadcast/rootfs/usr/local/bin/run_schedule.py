@@ -821,31 +821,34 @@ function showTextCard(){
   pollText();
 }
 var textStartTime=0;
+var pollTimer=null;
 function pollText(){
-  var myRun=lastTextRun;
+  if(pollTimer) clearTimeout(pollTimer);
   // ⏱️ 超时保护：超过 180 秒还没生成完就提示，避免一直卡\"生成中\"
   if(Date.now()-textStartTime > 180000){
     document.getElementById('textOut').textContent='⏱️ 生成超时，请查看日志';
     return;
   }
   fetch(BASE+'state?'+Date.now()).then(function(r){return r.json()}).then(function(st){
-    // 🔑 如果这次轮询期间用户又点了新的，忽略旧结果
-    if(myRun!==lastTextRun) return;
-    var card=document.getElementById('textCard');
     var out=document.getElementById('textOut');
     if(st.status==='idle'||st.status==='preparing'||st.status==='broadcasting'){
-      // 空闲/生成中：不显示旧内容，继续等
+      // 空闲/生成中：不显示旧内容，继续等（失败/异常也继续轮询）
       var ss=st.sentences||[];
       if(st.phase) out.textContent=st.phase+'...';
       else if(ss.length) out.textContent=ss.map(function(s){return s.text}).join('\\n');
       else out.textContent='生成中...';
-      setTimeout(pollText,1000);
+      pollTimer=setTimeout(pollText,1000);
     }else if(st.status==='done'){
       var all=st.sentences||[];
       if(all.length) out.textContent=all.map(function(s){return s.text}).join('\\n');
       else out.textContent='(无文字内容)';
+      // 显示完成状态
+      document.getElementById('status').textContent='✅ 文字已生成';
     }
-  }).catch(function(){});
+  }).catch(function(){
+    // 请求失败：重试而不是静默停（避免\"一直生成中\"）
+    pollTimer=setTimeout(pollText,1500);
+  });
 }
 function refreshLog(){
   fetch(BASE+'logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
