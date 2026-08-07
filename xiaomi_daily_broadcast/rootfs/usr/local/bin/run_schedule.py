@@ -159,6 +159,35 @@ def _ws_connect():
     return ws_url, token
 
 
+def stop_speaker(notify_entity):
+    """⏹ 停止音箱播放：暂停相关 media_player + notify 实体。"""
+    import websockets
+    try:
+        ws_url, token = _ws_connect()
+        async def _stop():
+            async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                await ws.recv()
+                # 找到该 notify 对应的 media_player（实体 id 含音箱标识）
+                await ws.send(json.dumps({"type": "get_states", "id": 1}))
+                r = json.loads(await ws.recv())
+                mp_targets = []
+                for s in r.get("result", []):
+                    eid = s.get("entity_id", "")
+                    if eid.startswith("media_player.") and "xiao_ai" in eid:
+                        mp_targets.append(eid)
+                # 暂停所有小米音箱
+                for eid in mp_targets:
+                    await ws.send(json.dumps({"type": "call_service", "domain": "media_player",
+                                              "service": "media_pause",
+                                              "service_data": {"entity_id": eid}, "id": 10}))
+                    await ws.recv()
+        asyncio.run(_stop())
+    except Exception as e:
+        log(f"⚠️ 停止音箱失败: {e}")
+
+
 def ensure_button_entity():
     """确保所有播报按钮存在（每日/周/月/年）。已存在跳过，避免重复创建堆积。"""
     import websockets
@@ -378,7 +407,25 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         import urllib.parse as up
         q = up.parse_qs(up.urlsplit(self.path).query)
-        if path == "/trigger":
+        if path == "/stop":
+            # ⏹ 停止播报：停音箱 + 清状态 + 释放锁
+            try:
+                cfg = ds.load_config()
+                notify_entity = cfg.get("speaker_notify", "")
+                stop_speaker(notify_entity)
+                STATE_FILE.write_text(json.dumps({"status": "idle", "sentences": [], "played_to": 0,
+                                                  "run_id": "", "mode": "speech", "summary_type": "", "phase": ""}))
+                # 释放锁（可能被卡住的播报占着）
+                try:
+                    if LOCK.locked():
+                        LOCK.release()
+                except Exception:
+                    pass
+                log("⏹ 已停止播报")
+                self._send(200, json.dumps({"ok": True}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/trigger":
             t = (q.get("type") or ["daily"])[0]
             # 用 startswith("true")：兼容历史 URL 里 Date.now() 粘在 true 后面变成 true1694 的情况
             to = (q.get("text_only") or ["false"])[0].lower().startswith("true")
@@ -477,10 +524,10 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.ghost{background:transparent;border:1px solid var(--accent);color:var(--accent2)}
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
-  #type{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
-  #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
-  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
-  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
+  #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
+  #btnSpeak,#btnText,#btnClear,#btnEntities,#btnStop{transition:background .2s}
+  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active,#btnStop.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
+  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active),#btnStop:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -548,6 +595,7 @@ WEBUI_HTML = """<!DOCTYPE html>
       <button id=\"btnText\" onclick=\"trigger(true)\">📝 文字播报</button>
       <button id=\"btnClear\" onclick=\"clearLog()\">🗑️ 清空日志</button>
       <button id=\"btnEntities\" onclick=\"showEntities()\">🔑 传感器实体</button>
+      <button id=\"btnStop\" onclick=\"stopBroadcast()\">⏹ 停止</button>
     </div>
     <div id=\"status\">就绪</div>
   </div>
@@ -873,9 +921,21 @@ function changeEngine(){
 }
 // 🔑 按钮互斥高亮：点哪个哪个蓝底，其他恢复灰边
 function setActive(id){
-  ['btnSpeak','btnText','btnClear','btnEntities'].forEach(function(b){
+  ['btnSpeak','btnText','btnClear','btnEntities','btnStop'].forEach(function(b){
     document.getElementById(b).className = (b===id) ? 'active' : '';
   });
+}
+/* ─── 停止播报 ─── */
+function stopBroadcast(){
+  setActive('btnStop');
+  fetch(BASE+'stop',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('status').textContent = d.ok ? '⏹ 已停止播报' : '❌ 停止失败';
+    // 清空文字区
+    var out=document.getElementById('textOut');
+    if(out) out.textContent='';
+    var tc=document.getElementById('textCard');
+    if(tc) tc.style.display='none';
+  }).catch(function(){document.getElementById('status').textContent='❌ 停止失败';});
 }
 function trigger(textOnly){
   var t=document.getElementById('type').value;

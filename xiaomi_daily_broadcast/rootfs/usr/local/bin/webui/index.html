@@ -27,10 +27,10 @@
   button.ghost{background:transparent;border:1px solid var(--accent);color:var(--accent2)}
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
-  #type{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
-  #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
-  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
-  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
+  #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
+  #btnSpeak,#btnText,#btnClear,#btnEntities,#btnStop{transition:background .2s}
+  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active,#btnStop.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
+  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active),#btnStop:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -98,6 +98,7 @@
       <button id="btnText" onclick="trigger(true)">📝 文字播报</button>
       <button id="btnClear" onclick="clearLog()">🗑️ 清空日志</button>
       <button id="btnEntities" onclick="showEntities()">🔑 传感器实体</button>
+      <button id="btnStop" onclick="stopBroadcast()">⏹ 停止</button>
     </div>
     <div id="status">就绪</div>
   </div>
@@ -423,9 +424,21 @@ function changeEngine(){
 }
 // 🔑 按钮互斥高亮：点哪个哪个蓝底，其他恢复灰边
 function setActive(id){
-  ['btnSpeak','btnText','btnClear','btnEntities'].forEach(function(b){
+  ['btnSpeak','btnText','btnClear','btnEntities','btnStop'].forEach(function(b){
     document.getElementById(b).className = (b===id) ? 'active' : '';
   });
+}
+/* ─── 停止播报 ─── */
+function stopBroadcast(){
+  setActive('btnStop');
+  fetch(BASE+'stop',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('status').textContent = d.ok ? '⏹ 已停止播报' : '❌ 停止失败';
+    // 清空文字区
+    var out=document.getElementById('textOut');
+    if(out) out.textContent='';
+    var tc=document.getElementById('textCard');
+    if(tc) tc.style.display='none';
+  }).catch(function(){document.getElementById('status').textContent='❌ 停止失败';});
 }
 function trigger(textOnly){
   var t=document.getElementById('type').value;
