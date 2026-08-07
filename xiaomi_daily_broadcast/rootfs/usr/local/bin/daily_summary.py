@@ -646,12 +646,13 @@ def generate_with_llm(report, config):
             "你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，生成一段自然、亲切、口语化的中文播报稿。\n"
             "要求：\n"
             "1. 语气像家人朋友闲聊，自然亲切，不要说\"数据如下\"\"第一点\"这类书面语，不要念报告\n"
-            "2. 开头按时间段问候，然后自然带出温度、湿度、用电、安全、空气质量、灯光的情况\n"
-            "3. 异常情况（温度偏高、门窗开着、灯还亮着、用电偏高、设备离线）必须自然提醒并给建议\n"
-            "4. 倒数第二句给一句温暖的鼓励语（可参考数据里的鼓励语素材），最后一句固定说播报结束\n"
-            "5. 全文120到220字，分成5到9句，每句独立成行，句号结尾，不要多余空行\n"
-            "6. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\n"
-            "7. 适合语音朗读：不要括号、列表序号、表情符号、英文\n"
+            "2. 开头按时间段问候一次（如\"中午好\"\"下午好\"），**整篇播报中问候语只能出现一次**，绝对不要重复出现\"中午好\"\"下午好\"等\n"
+            "3. 然后自然带出温度、湿度、用电、安全、空气质量、灯光的情况\n"
+            "4. 异常情况（温度偏高、门窗开着、灯还亮着、用电偏高、设备离线）必须自然提醒并给建议\n"
+            "5. 倒数第二句给一句温暖的鼓励语（可参考数据里的鼓励语素材），最后一句固定说播报结束\n"
+            "6. 全文120到220字，分成5到9句，每句独立成行，句号结尾，不要多余空行\n"
+            "7. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\n"
+            "8. 适合语音朗读：不要括号、列表序号、表情符号、英文\n"
         )
         user_msg = (
             f"现在是{report['time']['weekday']}{report['time']['period']}，请播报家中情况。\n"
@@ -711,6 +712,24 @@ def generate_with_llm(report, config):
         else:
             final.extend(seg for seg in re.split(r"[，,、]+", c) if seg.strip())
     sentences = [s.strip().rstrip("。！？，,!? ") + "。" for s in final]
+
+    # 🔑 问候语去重：整篇只保留第一个问候语（"中午好/下午好"等只出现一次）
+    # 重复问候语只去掉问候词前缀，保留句子内容（避免丢信息）
+    GREET_RE = re.compile(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*')
+    seen_greet = False
+    deduped = []
+    for s in sentences:
+        m = GREET_RE.match(s)
+        if m:
+            if seen_greet:
+                rest = s[m.end():].strip().rstrip("。！？，,!? ")
+                if rest:
+                    deduped.append(rest + "。")
+                continue  # 去掉重复问候前缀，保留内容
+            seen_greet = True
+        deduped.append(s)
+    sentences = deduped
+
     print(f"  🤖 LLM 生成：{len(text)}字，{len(sentences)}句")
     return sentences
 
