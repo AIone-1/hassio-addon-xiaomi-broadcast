@@ -147,8 +147,7 @@ BUTTONS = [
     {"type": "monthly", "name": "小爱播报·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
     {"type": "yearly",  "name": "小爱播报·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
 ]
-# 兼容旧版每日按钮（xiao_ai_bo_bao_an_niu 名字是"小爱播报按钮"）
-BUTTONS.append({"type": "daily", "name": "小爱播报按钮", "entity": "input_button.xiao_ai_bo_bao_an_niu", "icon": "mdi:volume-high"})
+# 旧版兼容按钮 an_niu 已移除（用户要求删掉，避免 5 个实体）
 
 
 def _ws_connect():
@@ -202,42 +201,43 @@ def ensure_button_entity():
 
 
 def button_watcher():
-    """监听所有播报按钮（每日/周/月/年）：被 press 时触发对应类型的语音播报。"""
+    """监听所有播报按钮（每日/周/月/年）：被 press 时触发对应类型的语音播报。
+    用 WebSocket 订阅 state_changed 事件（实时、无轮询首轮问题——之前轮询时间戳会有"第一次按不播"）。"""
     import websockets
-    last = {}   # entity -> 上次 state
     log("🔔 播报按钮监听已启动")
+    # 实体名映射：entity -> type
+    ENT2TYPE = {b["entity"]: b["type"] for b in BUTTONS}
+    ENT2NAME = {b["entity"]: b["name"] for b in BUTTONS}
     while True:
         try:
             ws_url, token = _ws_connect()
-            async def _get_all():
+            async def _watch():
                 async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
                     await ws.recv()
                     await ws.send(json.dumps({"type": "auth", "access_token": token}))
-                    await ws.recv()
-                    await ws.send(json.dumps({"type": "get_states", "id": 1}))
                     r = json.loads(await ws.recv())
-                    states = {}
-                    for s in r.get("result", []):
-                        eid = s.get("entity_id")
-                        if eid.startswith("input_button.") and "xiao_ai_bo_bao" in eid:
-                            states[eid] = s.get("state", "unavailable")
-                    return states
-            states = asyncio.run(_get_all())
-            for b in BUTTONS:
-                eid = b["entity"]
-                st = states.get(eid, "unavailable")
-                # 首次轮询只同步，不触发
-                if eid not in last:
-                    last[eid] = st
-                    continue
-                # input_button 的 state 是最后按下时间戳，变化 = 被按过
-                if st != last[eid] and st not in ("", "unavailable", "unknown", None) and last[eid] not in ("", "unavailable", "unknown", None):
-                    log(f"🔔 播报按钮被按下（{b['name']}），触发{b['type']}播报")
-                    run_broadcast(summary_type=b["type"], text_only=False)
-                last[eid] = st
+                    if r.get("type") != "auth_ok":
+                        log("⚠️ 按钮监听认证失败")
+                        return
+                    # 订阅所有实体状态变化事件
+                    await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
+                    while True:
+                        msg = json.loads(await ws.recv())
+                        ev = msg.get("event", {}).get("data", {})
+                        eid = ev.get("entity_id", "")
+                        if eid in ENT2TYPE:
+                            new_state = ev.get("new_state", {}) or {}
+                            st = new_state.get("state", "")
+                            old_state = ev.get("old_state", {}) or {}
+                            old_st = old_state.get("state", "")
+                            # input_button press：state 从时间戳变成新时间戳。实时事件，无需防重复。
+                            if st != old_st and st and old_st and st not in ("unavailable", "unknown") and old_st not in ("unavailable", "unknown"):
+                                log(f"🔔 播报按钮被按下（{ENT2NAME[eid]}），触发{ENT2TYPE[eid]}播报")
+                                run_broadcast(summary_type=ENT2TYPE[eid], text_only=False)
+            asyncio.run(_watch())
         except Exception as e:
-            log(f"⚠️ 播报按钮监听错误: {e}")
-        time.sleep(2)
+            log(f"⚠️ 播报按钮监听错误（重连）: {e}")
+        time.sleep(3)
 
 
 _RUN_COUNT = 0
