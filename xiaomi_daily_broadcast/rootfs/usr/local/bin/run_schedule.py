@@ -140,12 +140,12 @@ def save_edit_cfg(updates):
     return cfg
 
 
-# 4 个播报按钮：每日/周/月/年。entity_id 由名字拼音生成（创建后按实际 id 更新）
+# 4 个播报按钮：日/周/月/年。entity_id 由名字拼音生成（创建后按实际 id 更新）
 BUTTONS = [
-    {"type": "daily",   "name": "小爱播报·日", "entity": "input_button.xiao_ai_bo_bao_mei_ri", "icon": "mdi:calendar-today"},
-    {"type": "weekly",  "name": "小爱播报·周",   "entity": "input_button.xiao_ai_bo_bao_zhou",  "icon": "mdi:calendar-week"},
-    {"type": "monthly", "name": "小爱播报·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
-    {"type": "yearly",  "name": "小爱播报·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
+    {"type": "daily",   "name": "传感器实体·日", "entity": "input_button.xiao_ai_bo_bao_mei_ri", "icon": "mdi:calendar-today"},
+    {"type": "weekly",  "name": "传感器实体·周",   "entity": "input_button.xiao_ai_bo_bao_zhou",  "icon": "mdi:calendar-week"},
+    {"type": "monthly", "name": "传感器实体·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
+    {"type": "yearly",  "name": "传感器实体·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
 ]
 # 旧版兼容按钮 an_niu 已移除（用户要求删掉，避免 5 个实体）
 
@@ -176,7 +176,19 @@ def ensure_button_entity():
         ok_all = True
         for b in BUTTONS:
             if b["entity"] in existing:
-                # 已存在：显示实体 id，方便用户在自动化里引用
+                # 已存在：同步名字（改名后更新 HA 里的 friendly_name），并显示实体 id
+                try:
+                    async def _rename(entity_id, name):
+                        async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                            await ws.recv()
+                            await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                            await ws.recv()
+                            await ws.send(json.dumps({"id": 2, "type": "config/entity_registry/update",
+                                                      "entity_id": entity_id, "name": name}))
+                            return json.loads(await ws.recv()).get("success", False)
+                    asyncio.run(_rename(b["entity"], b["name"]))
+                except Exception:
+                    pass
                 log(f"✅ 播报按钮已存在: {b['name']} → {b['entity']}")
                 continue
             async def _create(name, icon):
@@ -450,9 +462,9 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
-  #btnSpeak,#btnText{transition:background .2s}
-  #btnSpeak.active,#btnText.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
-  #btnSpeak:not(.active),#btnText:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
+  #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
+  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
+  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -507,15 +519,15 @@ WEBUI_HTML = """<!DOCTYPE html>
   <div class=\"card\">
     <div class=\"row\">
       <select id=\"type\">
-        <option value=\"daily\">📅 每日</option>
+        <option value=\"daily\">📅 日</option>
         <option value=\"weekly\">🗓️ 周</option>
         <option value=\"monthly\">📆 月</option>
         <option value=\"yearly\">🎆 年</option>
       </select>
       <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 立即播报</button>
-      <button id=\"btnText\" class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
-      <button class=\"ghost\" onclick=\"clearLog()\">🗑️ 清空日志</button>
-      <button class=\"ghost\" onclick=\"showEntities()\">🔑 实体</button>
+      <button id=\"btnText\" onclick=\"trigger(true)\">📝 只看文字</button>
+      <button id=\"btnClear\" onclick=\"clearLog()\">🗑️ 清空日志</button>
+      <button id=\"btnEntities\" onclick=\"showEntities()\">🔑 实体</button>
     </div>
     <div id=\"status\">就绪</div>
   </div>
@@ -886,12 +898,18 @@ function refreshLog(){
   });
 }
 function clearLog(){
+  // 点击高亮，稍后恢复
+  var b=document.getElementById('btnClear'); b.className='active';
+  setTimeout(function(){ b.className=''; }, 500);
   fetch(BASE+'logs/clear',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
     document.getElementById('log').textContent='';
   }).catch(function(){document.getElementById('log').textContent='';});
 }
 /* ─── 查看播报按钮实体 ─── */
 function showEntities(){
+  // 点击高亮，稍后恢复
+  var eb=document.getElementById('btnEntities'); eb.className='active';
+  setTimeout(function(){ eb.className=''; }, 500);
   fetch(BASE+'entities/buttons?'+Date.now()).then(function(r){return r.json()}).then(function(list){
     var box=document.getElementById('entitiesBox');
     if(!list || !list.length){ box.innerHTML='<div style=\"color:var(--dim)\">暂无播报按钮实体</div>'; return; }
@@ -932,6 +950,9 @@ function copyEntity(eid){
     // fallback：显示可手动复制的文本
     document.getElementById('status').textContent='复制失败，请手动复制: '+eid;
   }
+  // 复制后关闭实体弹窗
+  var box=document.getElementById('entitiesBox');
+  if(box) box.style.display='none';
 }
 /* ─── 历史记录 ─── */
 var histYM={y:new Date().getFullYear(),m:new Date().getMonth()};
@@ -1019,6 +1040,15 @@ setInterval(refreshLog,5000);
 refreshLog();
 // 初始默认选中\"立即播报\"
 document.getElementById('btnSpeak').className='active';
+// 点击实体框以外区域关闭实体弹窗
+document.addEventListener('click',function(ev){
+  var box=document.getElementById('entitiesBox');
+  if(box && box.style.display==='block'){
+    var inBtn=(ev.target && ev.target.id==='btnEntities');
+    var inBox=(ev.target && ev.target.closest && ev.target.closest('#entitiesBox'));
+    if(!inBtn && !inBox) box.style.display='none';
+  }
+});
 </script>
 </body>
 </html>
