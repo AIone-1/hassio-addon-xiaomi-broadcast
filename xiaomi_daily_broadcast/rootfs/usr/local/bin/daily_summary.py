@@ -945,8 +945,11 @@ PERIOD_SYSTEM_PROMPT = (
 
 
 async def main(force=False, text_only=False, summary_type=None, print_report=False):
+    import time as _t
+    _t0 = _t.time()
     # 🔑 HAOS 加载项：启动时刷新 HA 连接端点（supervisor + SUPERVISOR_TOKEN）
     _refresh_endpoints()
+    print(f"  ⏱️ [main] 起点 {_t.time()-_t0:.2f}s")
     config = load_config()
     now = datetime.now()
     wd = now.weekday()
@@ -1344,7 +1347,9 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
 
             print("  🤖 大模型引擎生成播报...")
             write_broadcast_state('preparing', phase='生成播报稿中', summary_type=summary_type)
+            _t_llm = _t.time()
             llm_sentences = generate_with_llm(report, config)
+            print(f"  ⏱️ [main] LLM 调用耗时 {_t.time()-_t_llm:.2f}s")
             if llm_sentences:
                 lines = llm_sentences
                 # 兜底：LLM 常漏掉鼓励语和结束语，固定补上（避免重复）
@@ -1375,6 +1380,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ═══════════════════════════════════════════
         # 播报 + 逐句字幕（共用函数）
         # ═══════════════════════════════════════════
+        print(f"  ⏱️ [main] 内容生成完成，总耗时 {_t.time()-_t0:.2f}s，进入播报")
         await broadcast_sentences(lines, now, ws, config, text_only,
                                   summary_type="daily")
 

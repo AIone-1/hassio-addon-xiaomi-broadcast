@@ -222,20 +222,26 @@ def button_watcher():
         time.sleep(2)
 
 
+_RUN_COUNT = 0
+
 def run_broadcast(summary_type="daily", text_only=False):
     """在独立线程里跑播报（force=True）。语音播报用锁防双播；只看文字不发声，不抢锁。"""
+    global _RUN_COUNT
+    _RUN_COUNT += 1
+    run_no = _RUN_COUNT
     def _run():
         locked = False
         if not text_only:
             if not LOCK.acquire(blocking=False):
-                log("⚠️ 已有语音播报进行中，跳过本次触发")
+                log(f"⚠️ [run{run_no}] 已有语音播报进行中，跳过本次触发")
                 return
             locked = True
         try:
-            log(f"📢 手动触发播报: {summary_type}" + ("（只看文字）" if text_only else ""))
+            log(f"📢 [run{run_no}] 手动触发播报: {summary_type}" + ("（只看文字）" if text_only else ""))
             asyncio.run(ds.main(force=True, text_only=text_only, summary_type=summary_type))
+            log(f"✅ [run{run_no}] 播报线程结束")
         except Exception as e:
-            log(f"❌ 播报出错: {e}")
+            log(f"❌ [run{run_no}] 播报出错: {e}")
             # 🔑 兜底：出错时写 done 状态，避免前端一直卡"生成中"
             try:
                 import time as _t
