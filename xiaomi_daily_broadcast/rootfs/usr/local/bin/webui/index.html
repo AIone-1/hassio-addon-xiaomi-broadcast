@@ -144,11 +144,8 @@ var BASE = location.pathname.replace(/\/[^/]*$/, '/');
 
 /* ─── 跳转 HA 自动化 ─── */
 function gotoAutomations(){
-  // ingress 下 pathname 形如 /api/hassio_ingress/<token>/，去掉前缀得到 HA 根路径
-  var m = location.pathname.match(/^\/api\/hassio_ingress\/[^/]+\//);
-  var haRoot = m ? location.pathname.slice(0, location.pathname.indexOf(m[0])) : '';
-  if(!haRoot) haRoot = '/';
-  location.href = haRoot + 'config/automations';
+  // 跳转到 HA 自动化页。用用户的外网域名（新标签打开，不破坏当前 ingress 会话）
+  window.open('https://ha.5aione.com/config/automations', '_blank');
 }
 
 /* ─── 主题（白天/夜晚）─── */
