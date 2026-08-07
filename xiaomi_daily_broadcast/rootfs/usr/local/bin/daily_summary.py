@@ -125,6 +125,16 @@ def load_config():
                   day="monthly_day", also="monthly_also_daily")
     _merge_period(ps, "yearly", opt, enabled="yearly_summary", hour="yearly_hour",
                   day="yearly_day", month="yearly_month", also="yearly_also_daily")
+
+    # 🔑 前端切换的引擎模式（/data/engine_mode.json）优先于 options
+    try:
+        _em = Path("/data/engine_mode.json")
+        if _em.exists():
+            _mode = json.loads(_em.read_text()).get("mode", "")
+            if _mode in ("template", "llm"):
+                cfg.setdefault("engine", {})["mode"] = _mode
+    except Exception:
+        pass
     return cfg
 
 
@@ -492,13 +502,22 @@ async def call_service(ws, domain, service, data=None, target=None, cid=1, retur
 
 async def speak(ws, text, config, cid=999):
     entity = config["speaker_notify"]
-    try:
-        r = await call_service(ws, "notify", "send_message",
-                               {"message": text},
-                               {"entity_id": entity}, cid=cid)
-        return r.get("success", False)
-    except:
-        return False
+    # 音箱播放超时偶发，重试一次再放弃，并打印失败原因（不再静默）
+    for attempt in (1, 2):
+        try:
+            r = await call_service(ws, "notify", "send_message",
+                                   {"message": text},
+                                   {"entity_id": entity}, cid=cid)
+            if r.get("success"):
+                return True
+            err = (r.get("error") or {}).get("message", "")
+            if attempt == 1:
+                print(f"  ⚠️ 音箱播放失败（第{attempt}次）: {err}，重试...")
+        except Exception as e:
+            if attempt == 1:
+                print(f"  ⚠️ 音箱播放异常（第{attempt}次）: {e}，重试...")
+    print(f"  ❌ 音箱播放失败（已重试）: {entity}")
+    return False
 
 
 # ═══════════════════════════════════════════════════════

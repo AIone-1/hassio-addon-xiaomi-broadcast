@@ -351,6 +351,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(ha_entities(), ensure_ascii=False), "application/json")
         elif path in ("/cfg/config", "/api/config"):
             self._send(200, json.dumps(load_edit_cfg(), ensure_ascii=False), "application/json")
+        elif path == "/engine":
+            # 引擎模式（template/llm）：读 /data/engine_mode（前端切换生效）
+            try:
+                self._send(200, Path("/data/engine_mode.json").read_text(), "application/json")
+            except Exception:
+                self._send(200, json.dumps({"mode": ds.load_config().get("engine", {}).get("mode", "template")}), "application/json")
         elif path == "/theme":
             try:
                 self._send(200, Path("/data/theme.json").read_text(), "application/json")
@@ -428,6 +434,16 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/logs/clear":
             LOG_TAIL.clear()
             self._send(200, json.dumps({"ok": True}), "application/json")
+        elif path == "/engine":
+            try:
+                data = json.loads(self._body() or b"{}")
+                mode = data.get("mode", "template")
+                if mode not in ("template", "llm"):
+                    mode = "template"
+                Path("/data/engine_mode.json").write_text(json.dumps({"mode": mode}))
+                self._send(200, json.dumps({"ok": True, "mode": mode}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -523,6 +539,10 @@ WEBUI_HTML = """<!DOCTYPE html>
         <option value=\"weekly\">🗓️ 周</option>
         <option value=\"monthly\">📆 月</option>
         <option value=\"yearly\">🎆 年</option>
+      </select>
+      <select id=\"engineSel\" onchange=\"changeEngine()\" title=\"生成引擎\">
+        <option value=\"template\">🧩 模板</option>
+        <option value=\"llm\">🤖 大模型</option>
       </select>
       <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 语音播报</button>
       <button id=\"btnText\" onclick=\"trigger(true)\">📝 文字播报</button>
@@ -836,6 +856,21 @@ function saveCfg(){
 
 /* ─── 播报页 ─── */
 var lastTextRun=0;
+/* ─── 引擎切换 ─── */
+function loadEngine(){
+  fetch(BASE+'engine?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+    if(d && d.mode) document.getElementById('engineSel').value=d.mode;
+  }).catch(function(){});
+}
+function changeEngine(){
+  var mode=document.getElementById('engineSel').value;
+  fetch(BASE+'engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      document.getElementById('status').textContent = d.ok ? ('✅ 已切换：'+(mode==='llm'?'大模型':'模板')) : '❌ 切换失败';
+    })
+    .catch(function(){document.getElementById('status').textContent='❌ 切换失败';});
+}
 // 🔑 按钮互斥高亮：点哪个哪个蓝底，其他恢复灰边
 function setActive(id){
   ['btnSpeak','btnText','btnClear','btnEntities'].forEach(function(b){
@@ -1052,6 +1087,7 @@ setInterval(refreshLog,5000);
 refreshLog();
 // 默认全部灰边（不选中任何按钮）
 setActive('');
+loadEngine();
 // 点击实体框以外区域关闭实体弹窗
 document.addEventListener('click',function(ev){
   var box=document.getElementById('entitiesBox');
