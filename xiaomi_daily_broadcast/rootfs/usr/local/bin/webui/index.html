@@ -69,9 +69,7 @@
 </head>
 <body data-theme="dark">
 <h1 style="display:flex;align-items:center;gap:8px">🎙️ 小爱每日播报
-  <span style="flex:1"></span>
-  <button class="ghost" onclick="gotoAutomations()" style="padding:6px 12px;font-size:12px">⚙️ HA 自动化</button>
-  <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="padding:6px 12px;font-size:12px">☀️ 日间</button>
+  <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="margin-left:auto;padding:6px 12px;font-size:12px">☀️ 日间</button>
 </h1>
 <div class="tabs">
   <div class="tab on" id="tabMain" onclick="showPage('main')">📢 播报</div>
@@ -141,13 +139,6 @@
 // 🔑 ingress 前缀：HA ingress 下页面 URL 是 /api/hassio_ingress/<token>/...
 // 必须用相对路径（基于 location.pathname）而不是写死 /，否则请求打到 HA 主 API
 var BASE = location.pathname.replace(/\/[^/]*$/, '/');
-
-/* ─── 跳转 HA 自动化 ─── */
-function gotoAutomations(){
-  // 🔑 当前页直接跳转（不新开标签）。用 location.host（用户自己 HA 主机/域名）拼绝对地址，
-  // 离开 ingress 到 HA 主界面的自动化页。不写死任何域名。
-  location.href = '//' + location.host + '/config/automations';
-}
 
 /* ─── 主题（白天/夜晚）─── */
 function setTheme(t){

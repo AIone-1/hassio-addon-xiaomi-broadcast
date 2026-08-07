@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.14 (2026-08-07)
+
+- 🗑️ 移除"HA 自动化"跳转按钮（ingress 下跳转到 HA 主界面无法可靠实现，用户要求移除）
+
 ## 1.1.13 (2026-08-07)
 
 - 🔀 "HA 自动化"按钮改为当前页直接跳转（不新开标签）：`location.href = '//' + location.host + '/config/automations'`
