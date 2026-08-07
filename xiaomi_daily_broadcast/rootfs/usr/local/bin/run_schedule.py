@@ -177,6 +177,8 @@ def ensure_button_entity():
         ok_all = True
         for b in BUTTONS:
             if b["entity"] in existing:
+                # 已存在：显示实体 id，方便用户在自动化里引用
+                log(f"✅ 播报按钮已存在: {b['name']} → {b['entity']}")
                 continue
             async def _create(name, icon):
                 async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
@@ -191,7 +193,7 @@ def ensure_button_entity():
                         b["entity"] = "input_button." + r["result"]["id"]
                     return r.get("success", False)
             ok = asyncio.run(_create(b["name"], b["icon"]))
-            log(f"{'✅ 已创建' if ok else '⚠️ 创建失败'}播报按钮: {b['name']}")
+            log(f"{'✅ 已创建' if ok else '⚠️ 创建失败'}播报按钮: {b['name']} → {b['entity']}")
             ok_all = ok_all and ok
         return ok_all
     except Exception as e:
@@ -348,6 +350,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/history/day":
             date_str = q.get("date", [""])[0]
             self._send(200, json.dumps(history_day(date_str), ensure_ascii=False), "application/json")
+        elif path == "/entities/buttons":
+            # 播报按钮实体列表（供用户在自动化里引用）
+            self._send(200, json.dumps([{"name": b["name"], "entity": b["entity"], "type": b["type"]} for b in BUTTONS], ensure_ascii=False), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -510,9 +515,11 @@ WEBUI_HTML = """<!DOCTYPE html>
       <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 立即播报</button>
       <button id=\"btnText\" class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
       <button class=\"ghost\" onclick=\"clearLog()\">🗑️ 清空日志</button>
+      <button class=\"ghost\" onclick=\"showEntities()\">🔑 实体</button>
     </div>
     <div id=\"status\">就绪</div>
   </div>
+  <div class=\"card\" id=\"entitiesBox\" style=\"display:none\"></div>
   <div class=\"card\" id=\"textCard\" style=\"display:none\">
     <div class=\"sec-title\">📝 播报文字</div>
     <div id=\"textOut\" style=\"font-size:14px;line-height:1.8;white-space:pre-wrap\"></div>
@@ -882,6 +889,35 @@ function clearLog(){
   fetch(BASE+'logs/clear',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
     document.getElementById('log').textContent='';
   }).catch(function(){document.getElementById('log').textContent='';});
+}
+/* ─── 查看播报按钮实体 ─── */
+function showEntities(){
+  fetch(BASE+'entities/buttons?'+Date.now()).then(function(r){return r.json()}).then(function(list){
+    var box=document.getElementById('entitiesBox');
+    if(!list || !list.length){ box.innerHTML='<div style=\"color:var(--dim)\">暂无播报按钮实体</div>'; return; }
+    var tb={'daily':'📅 每日','weekly':'🗓️ 周','monthly':'📆 月','yearly':'🎆 年'};
+    var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">播报按钮实体（自动化里可引用，点复制）：</div>';
+    list.forEach(function(b){
+      h+='<div style=\"padding:8px 10px;margin-bottom:6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer\" onclick=\"copyEntity(\\''+b.entity+'\\')\">'
+        +'<div style=\"font-weight:600\">'+(tb[b.type]||b.type)+' · '+esc(b.name)+'</div>'
+        +'<div style=\"font-size:11px;color:var(--accent2)\">'+esc(b.entity)+'</div>'
+        +'</div>';
+    });
+    h+='<div style=\"font-size:11px;color:var(--dim);margin-top:4px\">自动化示例：服务 input_button.press → 目标 '+(list[0]?esc(list[0].entity):'')+'</div>';
+    box.innerHTML=h;
+    box.style.display='block';
+  }).catch(function(){
+    var box=document.getElementById('entitiesBox');
+    box.innerHTML='<div style=\"color:var(--red)\">加载实体失败</div>';
+    box.style.display='block';
+  });
+}
+function copyEntity(eid){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(eid).then(function(){document.getElementById('status').textContent='✅ 已复制: '+eid;});
+  }else{
+    document.getElementById('status').textContent=eid;
+  }
 }
 /* ─── 历史记录 ─── */
 var histYM={y:new Date().getFullYear(),m:new Date().getMonth()};
