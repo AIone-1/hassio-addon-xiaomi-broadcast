@@ -429,6 +429,9 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
+  #btnSpeak,#btnText{transition:background .2s}
+  #btnSpeak.active,#btnText.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
+  #btnSpeak:not(.active),#btnText:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -488,8 +491,8 @@ WEBUI_HTML = """<!DOCTYPE html>
         <option value=\"monthly\">📆 月</option>
         <option value=\"yearly\">🎆 年</option>
       </select>
-      <button onclick=\"trigger(false)\">📢 立即播报</button>
-      <button class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
+      <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 立即播报</button>
+      <button id=\"btnText\" class=\"ghost\" onclick=\"trigger(true)\">📝 只看文字</button>
       <button class=\"ghost\" onclick=\"clearLog()\">🗑️ 清空日志</button>
     </div>
     <div id=\"status\">就绪</div>
@@ -800,6 +803,9 @@ function saveCfg(){
 var lastTextRun=0;
 function trigger(textOnly){
   var t=document.getElementById('type').value;
+  // 🔑 按钮选中态：点了哪个哪个蓝底白字，另一个普通样式
+  document.getElementById('btnSpeak').className = textOnly ? '' : 'active';
+  document.getElementById('btnText').className = textOnly ? 'active' : '';
   lastTextRun=Date.now();  // 🔑 记录本次触发时间，pollText 用它忽略旧状态
   fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+'&_='+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
@@ -945,6 +951,8 @@ function loadHist(){ histLoadCal(); }
 
 setInterval(refreshLog,5000);
 refreshLog();
+// 初始默认选中\"立即播报\"
+document.getElementById('btnSpeak').className='active';
 </script>
 </body>
 </html>
