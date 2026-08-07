@@ -328,6 +328,13 @@ class Handler(BaseHTTPRequestHandler):
             t = (q.get("type") or ["daily"])[0]
             # 用 startswith("true")：兼容历史 URL 里 Date.now() 粘在 true 后面变成 true1694 的情况
             to = (q.get("text_only") or ["false"])[0].lower().startswith("true")
+            # 🔑 先清空状态，避免前端读到上一次播报的旧内容（旧 run_id + 全部句子）
+            try:
+                STATE_FILE.write_text(json.dumps({"status": "idle", "sentences": [], "played_to": 0,
+                                                  "run_id": "", "mode": "speech",
+                                                  "summary_type": t, "phase": ""}))
+            except Exception:
+                pass
             run_broadcast(summary_type=t, text_only=to)
             self._send(202, json.dumps({"ok": True, "type": t}), "application/json")
         elif path == "/task":
@@ -653,14 +660,14 @@ function onSearch(key){
   });
   if(!matches.length){ box.innerHTML='<div style=\"color:#8b949e;font-size:12px;padding:6px 0\">无匹配实体</div>'; return; }
   var total=matches.length;
-  var h='<div style=\"font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px\">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择）</div>';
-  var shown=0;
+  var h='<div style=\"font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px\">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择，可滚动）</div>';
+  // 全部显示 + 限高可滚动（最多约 20 条可见，超出滚动查看）
+  h+='<div style=\"max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px\">';
   matches.forEach(function(e){
-    if(shown>=30) return; shown++;
     var label=(e.name?e.name+' — ':'')+e.entity_id;
     h+='<div style=\"padding:7px 10px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset,#0d1117);border:1px solid #30363d;cursor:pointer;font-size:12px\" onclick=\"pickCandidate(\\''+key+'\\',\\''+e.entity_id+'\\')\">🔗 '+esc(label)+'</div>';
   });
-  if(total>30) h+='<div style=\"color:#8b949e;font-size:11px;padding:4px 0\">仅显示前 30 个，输入关键词缩小范围</div>';
+  h+='</div>';
   box.innerHTML=h;
 }
 
@@ -771,8 +778,10 @@ function saveCfg(){
 }
 
 /* ─── 播报页 ─── */
+var lastTextRun=0;
 function trigger(textOnly){
   var t=document.getElementById('type').value;
+  lastTextRun=Date.now();  // 🔑 记录本次触发时间，pollText 用它忽略旧状态
   fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+'&_='+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
     .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
@@ -786,13 +795,18 @@ function showTextCard(){
   pollText();
 }
 function pollText(){
+  var myRun=lastTextRun;
   fetch(BASE+'state?'+Date.now()).then(function(r){return r.json()}).then(function(st){
+    // 🔑 如果这次轮询期间用户又点了新的，忽略旧结果
+    if(myRun!==lastTextRun) return;
     var card=document.getElementById('textCard');
     var out=document.getElementById('textOut');
-    if(st.status==='preparing'||st.status==='broadcasting'){
-      if(st.phase) out.textContent=st.phase+'...';
+    if(st.status==='idle'||st.status==='preparing'||st.status==='broadcasting'){
+      // 空闲/生成中：不显示旧内容，继续等
       var ss=st.sentences||[];
-      if(ss.length) out.textContent=ss.map(function(s){return s.text}).join('\\n');
+      if(st.phase) out.textContent=st.phase+'...';
+      else if(ss.length) out.textContent=ss.map(function(s){return s.text}).join('\\n');
+      else out.textContent='生成中...';
       setTimeout(pollText,1000);
     }else if(st.status==='done'){
       var all=st.sentences||[];
