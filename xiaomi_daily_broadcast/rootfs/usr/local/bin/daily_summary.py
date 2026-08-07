@@ -233,7 +233,8 @@ def calc_device_energy(states, power_config):
             continue
         v = get_float(states, eid)
         if v is not None and v >= 0:
-            device_energy[label] = v
+            # label 空则用 entity_id 兜底，避免排名显示"耗电x度"没设备名
+            device_energy[label if label else eid] = v
     return device_energy
 
 

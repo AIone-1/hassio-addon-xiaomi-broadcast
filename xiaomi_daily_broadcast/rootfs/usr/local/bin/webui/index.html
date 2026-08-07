@@ -410,10 +410,17 @@ function trigger(textOnly){
 function showTextCard(){
   document.getElementById('textCard').style.display='block';
   document.getElementById('textOut').textContent='生成中...';
+  textStartTime=Date.now();
   pollText();
 }
+var textStartTime=0;
 function pollText(){
   var myRun=lastTextRun;
+  // ⏱️ 超时保护：超过 180 秒还没生成完就提示，避免一直卡"生成中"
+  if(Date.now()-textStartTime > 180000){
+    document.getElementById('textOut').textContent='⏱️ 生成超时，请查看日志';
+    return;
+  }
   fetch(BASE+'state?'+Date.now()).then(function(r){return r.json()}).then(function(st){
     // 🔑 如果这次轮询期间用户又点了新的，忽略旧结果
     if(myRun!==lastTextRun) return;

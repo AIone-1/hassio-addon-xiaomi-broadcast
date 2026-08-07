@@ -236,6 +236,15 @@ def run_broadcast(summary_type="daily", text_only=False):
             asyncio.run(ds.main(force=True, text_only=text_only, summary_type=summary_type))
         except Exception as e:
             log(f"❌ 播报出错: {e}")
+            # 🔑 兜底：出错时写 done 状态，避免前端一直卡"生成中"
+            try:
+                import time as _t
+                err_state = {"status": "done", "sentences": [{"text": f"播报出错：{e}", "icon": "text", "idx": 1, "total": 1}],
+                             "played_to": 1, "run_id": str(int(_t.time() * 1000)), "mode": "speech",
+                             "summary_type": summary_type, "phase": ""}
+                STATE_FILE.write_text(json.dumps(err_state, ensure_ascii=False))
+            except Exception:
+                pass
         finally:
             if locked:
                 LOCK.release()
@@ -792,10 +801,17 @@ function trigger(textOnly){
 function showTextCard(){
   document.getElementById('textCard').style.display='block';
   document.getElementById('textOut').textContent='生成中...';
+  textStartTime=Date.now();
   pollText();
 }
+var textStartTime=0;
 function pollText(){
   var myRun=lastTextRun;
+  // ⏱️ 超时保护：超过 180 秒还没生成完就提示，避免一直卡\"生成中\"
+  if(Date.now()-textStartTime > 180000){
+    document.getElementById('textOut').textContent='⏱️ 生成超时，请查看日志';
+    return;
+  }
   fetch(BASE+'state?'+Date.now()).then(function(r){return r.json()}).then(function(st){
     // 🔑 如果这次轮询期间用户又点了新的，忽略旧结果
     if(myRun!==lastTextRun) return;
