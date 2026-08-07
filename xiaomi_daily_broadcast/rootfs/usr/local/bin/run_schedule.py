@@ -140,7 +140,15 @@ def save_edit_cfg(updates):
     return cfg
 
 
-BUTTON_ENTITY = "input_button.xiao_ai_bo_bao_an_niu"
+# 4 个播报按钮：每日/周/月/年。entity_id 由名字拼音生成（创建后按实际 id 更新）
+BUTTONS = [
+    {"type": "daily",   "name": "小爱播报·每日", "entity": "input_button.xiao_ai_bo_bao_mei_ri", "icon": "mdi:calendar-today"},
+    {"type": "weekly",  "name": "小爱播报·周",   "entity": "input_button.xiao_ai_bo_bao_zhou",  "icon": "mdi:calendar-week"},
+    {"type": "monthly", "name": "小爱播报·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
+    {"type": "yearly",  "name": "小爱播报·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
+]
+# 兼容旧版每日按钮（xiao_ai_bo_bao_an_niu 名字是"小爱播报按钮"）
+BUTTONS.append({"type": "daily", "name": "小爱播报按钮", "entity": "input_button.xiao_ai_bo_bao_an_niu", "icon": "mdi:volume-high"})
 
 
 def _ws_connect():
@@ -153,70 +161,78 @@ def _ws_connect():
 
 
 def ensure_button_entity():
-    """确保播报按钮存在（input_button.xiao_ai_bo_bao_an_niu）。按一下触发一次播报。"""
+    """确保所有播报按钮存在（每日/周/月/年）。已存在跳过，避免重复创建堆积。"""
     import websockets
     try:
         ws_url, token = _ws_connect()
-        async def _check():
+        async def _existing():
             async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
                 await ws.recv()
                 await ws.send(json.dumps({"type": "auth", "access_token": token}))
                 await ws.recv()
                 await ws.send(json.dumps({"type": "get_states", "id": 1}))
                 r = json.loads(await ws.recv())
-                for s in r.get("result", []):
-                    if s.get("entity_id") == BUTTON_ENTITY:
-                        return True
-                return False
-        if asyncio.run(_check()):
-            log("✅ 播报按钮已存在: " + BUTTON_ENTITY)
-            return True
-        async def _create():
-            async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
-                await ws.recv()
-                await ws.send(json.dumps({"type": "auth", "access_token": token}))
-                await ws.recv()
-                await ws.send(json.dumps({"id": 1, "type": "input_button/create",
-                                          "name": "小爱播报按钮", "icon": "mdi:volume-high"}))
-                r = json.loads(await ws.recv())
-                return r.get("success", False)
-        ok = asyncio.run(_create())
-        log(("✅ 已创建播报按钮: " + BUTTON_ENTITY) if ok else "⚠️ 播报按钮创建失败")
-        return ok
+                return set(s.get("entity_id") for s in r.get("result", []))
+        existing = asyncio.run(_existing())
+        ok_all = True
+        for b in BUTTONS:
+            if b["entity"] in existing:
+                continue
+            async def _create(name, icon):
+                async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                    await ws.recv()
+                    await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                    await ws.recv()
+                    await ws.send(json.dumps({"id": 1, "type": "input_button/create",
+                                              "name": name, "icon": icon}))
+                    r = json.loads(await ws.recv())
+                    # 返回的 result.id 是实际生成的 entity_id（如 xiao_ai_bo_bao_zhou）
+                    if r.get("success") and isinstance(r.get("result"), dict):
+                        b["entity"] = "input_button." + r["result"]["id"]
+                    return r.get("success", False)
+            ok = asyncio.run(_create(b["name"], b["icon"]))
+            log(f"{'✅ 已创建' if ok else '⚠️ 创建失败'}播报按钮: {b['name']}")
+            ok_all = ok_all and ok
+        return ok_all
     except Exception as e:
         log(f"⚠️ 创建播报按钮失败: {e}")
         return False
 
 
 def button_watcher():
-    """监听播报按钮：被 press 时触发一次语音播报。按钮按完自动回弹，无需复位。"""
+    """监听所有播报按钮（每日/周/月/年）：被 press 时触发对应类型的语音播报。"""
     import websockets
-    last = None
+    last = {}   # entity -> 上次 state
     log("🔔 播报按钮监听已启动")
     while True:
         try:
             ws_url, token = _ws_connect()
-            async def _get():
+            async def _get_all():
                 async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
                     await ws.recv()
                     await ws.send(json.dumps({"type": "auth", "access_token": token}))
                     await ws.recv()
                     await ws.send(json.dumps({"type": "get_states", "id": 1}))
                     r = json.loads(await ws.recv())
+                    states = {}
                     for s in r.get("result", []):
-                        if s.get("entity_id") == BUTTON_ENTITY:
-                            return s.get("state", "unavailable")
-                    return "unavailable"
-            state = asyncio.run(_get())
-            # 首次轮询只同步 last，不触发（避免启动误触发）
-            if last is None:
-                last = state
-                continue
-            # input_button 的 state 是最后按下时间戳，变化 = 被按过
-            if state != last and state not in ("", "unavailable", "unknown", None) and last not in ("", "unavailable", "unknown", None):
-                log("🔔 播报按钮被按下，触发播报")
-                run_broadcast(summary_type="daily", text_only=False)
-            last = state
+                        eid = s.get("entity_id")
+                        if eid.startswith("input_button.") and "xiao_ai_bo_bao" in eid:
+                            states[eid] = s.get("state", "unavailable")
+                    return states
+            states = asyncio.run(_get_all())
+            for b in BUTTONS:
+                eid = b["entity"]
+                st = states.get(eid, "unavailable")
+                # 首次轮询只同步，不触发
+                if eid not in last:
+                    last[eid] = st
+                    continue
+                # input_button 的 state 是最后按下时间戳，变化 = 被按过
+                if st != last[eid] and st not in ("", "unavailable", "unknown", None) and last[eid] not in ("", "unavailable", "unknown", None):
+                    log(f"🔔 播报按钮被按下（{b['name']}），触发{b['type']}播报")
+                    run_broadcast(summary_type=b["type"], text_only=False)
+                last[eid] = st
         except Exception as e:
             log(f"⚠️ 播报按钮监听错误: {e}")
         time.sleep(2)
