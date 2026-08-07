@@ -1417,9 +1417,9 @@ async def run_period_summary(summary_type, now, ws, states, config,
     config = load_config()
 
     # 采集今日临时数据（写快照用）
-    temp_history = fetch_history(list(config["temp_sensors"].keys()), TOKEN)
-    device_energy = calc_device_energy(states, config["power_sensors"])
-    lights_on = [n for eid, n in config["lights"].items()
+    temp_history = fetch_history(list((config.get("temp_sensors") or {}).keys()), TOKEN)
+    device_energy = calc_device_energy(states, config.get("power_sensors") or {})
+    lights_on = [n for eid, n in (config.get("lights") or {}).items()
                  if states.get(eid, {}).get("state") == "on"]
     open_doors = [n for eid, n in config.get("doors", {}).items()
                   if states.get(eid, {}).get("state") == "on"
@@ -1441,7 +1441,7 @@ async def run_period_summary(summary_type, now, ws, states, config,
 
     # 先写今日快照（周期才含今天）
     write_daily_snapshot(now, config, states, temp_history, device_energy,
-                         count_today_tasks(), get_float(states, config["pm25_sensor"]),
+                         count_today_tasks(), get_float(states, config.get("pm25_sensor", "")),
                          lights_on, load_active_memos(), open_doors, faults)
 
     # 聚合周期
