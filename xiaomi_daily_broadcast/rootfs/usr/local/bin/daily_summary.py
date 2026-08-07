@@ -1387,21 +1387,22 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
 
 async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="daily"):
     """写状态文件 → 逐句播报（text_only 则跳过）→ 存历史。模板和周期共用。"""
-    # 🔑 最后一道防线：全局问候去重，任何来源（LLM稿/鼓励语/模板）的重复问候只留第一个
-    GREET_RE = re.compile(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*')
-    _seen = False
-    _deduped_lines = []
+    # 🔑 最后一道防线：全局问候去重——任何位置（不只句首）的问候词只保留第一个
+    # 之前只匹配句首（^(晚上好)），漏掉 LLM 稿里"周五晚上好了"这种句中问候 → 重复
+    GREET_PAT = r'凌晨好|早上好|上午好|中午好|下午好|晚上好'
+    _seen_greet = False
+    _final = []
     for line in lines:
-        _m = GREET_RE.match(line.strip())
-        if _m:
-            if _seen:
-                _rest = line[_m.end():].strip().rstrip("。！？，,!? ")
-                if _rest:
-                    _deduped_lines.append(_rest + "。")
+        if re.search(GREET_PAT, line):
+            if _seen_greet:
+                # 已有问候：去掉本句所有问候词（"周五晚上好了"→"周五好了"）
+                _no = re.sub(GREET_PAT, '', line).strip().rstrip("。！？，,!? ")
+                if _no:
+                    _final.append(_no + "。")
                 continue
-            _seen = True
-        _deduped_lines.append(line)
-    lines = _deduped_lines
+            _seen_greet = True
+        _final.append(line)
+    lines = _final
 
     # 🔑 最后一道防线：全局结束语去重，任何来源的收尾句只保留最后一句
     # 识别 LLM 常见的各种收尾形式："播报结束" / "就到这里" / "以上就是/以上是" / "本次播报"等
