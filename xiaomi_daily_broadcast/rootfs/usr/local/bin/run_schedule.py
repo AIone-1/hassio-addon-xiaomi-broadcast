@@ -524,10 +524,10 @@ WEBUI_HTML = """<!DOCTYPE html>
         <option value=\"monthly\">📆 月</option>
         <option value=\"yearly\">🎆 年</option>
       </select>
-      <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 立即播报</button>
-      <button id=\"btnText\" onclick=\"trigger(true)\">📝 只看文字</button>
+      <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 语音播报</button>
+      <button id=\"btnText\" onclick=\"trigger(true)\">📝 文字播报</button>
       <button id=\"btnClear\" onclick=\"clearLog()\">🗑️ 清空日志</button>
-      <button id=\"btnEntities\" onclick=\"showEntities()\">🔑 实体</button>
+      <button id=\"btnEntities\" onclick=\"showEntities()\">🔑 传感器实体</button>
     </div>
     <div id=\"status\">就绪</div>
   </div>
@@ -857,7 +857,8 @@ function trigger(textOnly){
       }
     })
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
-  if(textOnly){ showTextCard(); }
+  // 🔑 语音播报和文字播报都显示文字区（语音播报时实时显示逐句字幕）
+  showTextCard();
   setTimeout(refreshLog,1000);
 }
 function showTextCard(){
