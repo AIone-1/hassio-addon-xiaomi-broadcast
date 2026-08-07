@@ -1358,7 +1358,11 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 enc = pick_time(config.get("encouragements", []), h, seed)
                 enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好")
                 if enc and not any(kw in "".join(lines) for kw in enc_words):
-                    lines.append(enc)
+                    # 🐛 同样去问候前缀，避免和 LLM 稿子的问候语重复
+                    import re as _re2
+                    enc = _re2.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', enc)
+                    if enc:
+                        lines.append(enc)
                 # 结束语兜底：整个稿子都没有结束语才补
                 if not any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "结束")):
                     lines.append(build_ending(h))
@@ -1377,6 +1381,22 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
 
 async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="daily"):
     """写状态文件 → 逐句播报（text_only 则跳过）→ 存历史。模板和周期共用。"""
+    # 🔑 最后一道防线：全局问候去重，任何来源（LLM稿/鼓励语/模板）的重复问候只留第一个
+    GREET_RE = re.compile(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*')
+    _seen = False
+    _deduped_lines = []
+    for line in lines:
+        _m = GREET_RE.match(line.strip())
+        if _m:
+            if _seen:
+                _rest = line[_m.end():].strip().rstrip("。！？，,!? ")
+                if _rest:
+                    _deduped_lines.append(_rest + "。")
+                continue
+            _seen = True
+        _deduped_lines.append(line)
+    lines = _deduped_lines
+
     clean_lines = []
     for line in lines:
         line = line.strip().rstrip("。！？，,!? ")
