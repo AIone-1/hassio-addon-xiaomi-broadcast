@@ -1403,6 +1403,12 @@ async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="d
         _deduped_lines.append(line)
     lines = _deduped_lines
 
+    # 🔑 最后一道防线：全局结束语去重，任何来源的"播报结束"只保留最后一句
+    _END_KW = ("播报结束", "播报完毕", "播报完成")
+    _end_idx = [i for i, l in enumerate(lines) if any(k in l for k in _END_KW)]
+    if len(_end_idx) > 1:
+        lines = [l for i, l in enumerate(lines) if i not in _end_idx[:-1]]
+
     clean_lines = []
     for line in lines:
         line = line.strip().rstrip("。！？，,!? ")
