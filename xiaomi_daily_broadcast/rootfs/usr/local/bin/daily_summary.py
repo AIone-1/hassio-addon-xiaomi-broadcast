@@ -1354,8 +1354,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 lines = llm_sentences
                 # 兜底：LLM 常漏掉鼓励语和结束语，固定补上（避免重复）
                 seed = wd * 7 + now.day
-                # 结束语去重：稿子里"播报结束"类句子若不止一句，只保留最后一句
-                END_KW = ("播报结束", "播报完毕", "播报完成")
+                # 结束语去重：稿子里"播报结束/就到这里"类收尾句若不止一句，只保留最后一句
+                END_KW = ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报")
                 end_idx = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
                 if len(end_idx) > 1:
                     lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
@@ -1368,8 +1368,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     enc = _re2.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', enc)
                     if enc:
                         lines.append(enc)
-                # 结束语兜底：整个稿子都没有结束语才补
-                if not any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "结束")):
+                # 结束语兜底：整个稿子都没有收尾句才补（识别各种收尾形式，避免重复）
+                if not any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
                     lines.append(build_ending(h))
             elif engine_cfg.get("llm", {}).get("fallback_to_template", True):
                 print("  ⚠️ LLM 生成失败，回退到规则模板")
@@ -1403,8 +1403,9 @@ async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="d
         _deduped_lines.append(line)
     lines = _deduped_lines
 
-    # 🔑 最后一道防线：全局结束语去重，任何来源的"播报结束"只保留最后一句
-    _END_KW = ("播报结束", "播报完毕", "播报完成")
+    # 🔑 最后一道防线：全局结束语去重，任何来源的收尾句只保留最后一句
+    # 识别 LLM 常见的各种收尾形式："播报结束" / "就到这里" / "以上就是/以上是" / "本次播报"等
+    _END_KW = ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报")
     _end_idx = [i for i, l in enumerate(lines) if any(k in l for k in _END_KW)]
     if len(_end_idx) > 1:
         lines = [l for i, l in enumerate(lines) if i not in _end_idx[:-1]]
@@ -1510,11 +1511,11 @@ async def run_period_summary(summary_type, now, ws, states, config,
         if llm_sentences:
             lines = llm_sentences
             # 周期路径同样做结束语去重/兜底
-            END_KW = ("播报结束", "播报完毕", "播报完成")
+            END_KW = ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报")
             end_idx = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
             if len(end_idx) > 1:
                 lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
-            if not any(k in "".join(lines) for k in ("播报结束", "播报完毕", "播报完成", "结束")):
+            if not any(k in "".join(lines) for k in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
                 lines.append(build_ending(now.hour))
         elif config.get("engine", {}).get("llm", {}).get("fallback_to_template", True):
             print("  ⚠️ LLM 生成失败，回退到规则模板")
