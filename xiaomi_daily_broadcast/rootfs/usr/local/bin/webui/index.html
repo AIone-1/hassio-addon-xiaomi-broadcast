@@ -402,7 +402,13 @@ function trigger(textOnly){
   lastTextRun=Date.now();  // 🔑 记录本次触发时间，pollText 用它忽略旧状态
   fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+'&_='+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
-    .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
+    .then(function(d){
+      if(d.ok){
+        document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';
+      }else{
+        document.getElementById('status').textContent='⚠️ '+(d.error||'已有播报进行中，请稍候');
+      }
+    })
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
   if(textOnly){ showTextCard(); }
   setTimeout(refreshLog,1000);

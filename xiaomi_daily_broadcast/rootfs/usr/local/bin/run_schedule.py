@@ -337,6 +337,10 @@ class Handler(BaseHTTPRequestHandler):
             t = (q.get("type") or ["daily"])[0]
             # 用 startswith("true")：兼容历史 URL 里 Date.now() 粘在 true 后面变成 true1694 的情况
             to = (q.get("text_only") or ["false"])[0].lower().startswith("true")
+            # 🔑 语音播报前检查锁：被占说明正在播，返回明确提示，避免"看起来卡死"
+            if not to and LOCK.locked():
+                self._send(409, json.dumps({"ok": False, "error": "已有语音播报进行中，请稍候"}), "application/json")
+                return
             # 🔑 先清空状态，避免前端读到上一次播报的旧内容（旧 run_id + 全部句子）
             try:
                 STATE_FILE.write_text(json.dumps({"status": "idle", "sentences": [], "played_to": 0,
@@ -793,7 +797,13 @@ function trigger(textOnly){
   lastTextRun=Date.now();  // 🔑 记录本次触发时间，pollText 用它忽略旧状态
   fetch(BASE+'trigger?type='+t+(textOnly?'&text_only=true':'')+'&_='+Date.now(),{method:'POST'})
     .then(function(r){return r.json()})
-    .then(function(d){document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';})
+    .then(function(d){
+      if(d.ok){
+        document.getElementById('status').textContent='✅ 已触发 '+(textOnly?'文字':'语音')+'播报';
+      }else{
+        document.getElementById('status').textContent='⚠️ '+(d.error||'已有播报进行中，请稍候');
+      }
+    })
     .catch(function(){document.getElementById('status').textContent='❌ 触发失败';});
   if(textOnly){ showTextCard(); }
   setTimeout(refreshLog,1000);
