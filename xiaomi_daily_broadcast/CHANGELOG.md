@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.13 (2026-08-07)
+
+- 🔀 "HA 自动化"按钮改为当前页直接跳转（不新开标签）：`location.href = '//' + location.host + '/config/automations'`
+
 ## 1.1.12 (2026-08-07)
 
 - 🌍 "HA 自动化"按钮改为通用跳转：用 location.host（每个用户自己的 HA 地址）拼 `/config/automations`，不再写死域名，所有用户可用
