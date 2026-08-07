@@ -144,8 +144,9 @@ var BASE = location.pathname.replace(/\/[^/]*$/, '/');
 
 /* ─── 跳转 HA 自动化 ─── */
 function gotoAutomations(){
-  // 跳转到 HA 自动化页。用用户的外网域名（新标签打开，不破坏当前 ingress 会话）
-  window.open('https://ha.5aione.com/config/automations', '_blank');
+  // 🔑 通用方案：用 location.host（用户自己 HA 的主机/域名）拼地址，不写死任何域名。
+  // 新标签打开，不破坏当前 ingress 会话。所有用户都指向自己的 HA。
+  window.open('//' + location.host + '/config/automations', '_blank');
 }
 
 /* ─── 主题（白天/夜晚）─── */

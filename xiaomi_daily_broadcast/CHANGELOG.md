@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.12 (2026-08-07)
+
+- 🌍 "HA 自动化"按钮改为通用跳转：用 location.host（每个用户自己的 HA 地址）拼 `/config/automations`，不再写死域名，所有用户可用
+
 ## 1.1.11 (2026-08-07)
 
 - 🐛 修复"HA 自动化"按钮跳转错误：改为新标签打开 ha.5aione.com/config/automations（原跳转逻辑会离开 ingress 导致登录/新开窗口）
