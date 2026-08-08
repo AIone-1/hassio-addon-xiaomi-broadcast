@@ -394,7 +394,7 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
       else if(st==='unavailable'||st==='unknown') st='⚠️ 无';
     }
   }
-  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap">'+(st?esc(st):'-')+'</span>';
+  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st):'-')+'</span>';
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
