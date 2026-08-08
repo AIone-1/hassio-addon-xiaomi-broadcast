@@ -438,7 +438,8 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
       }
     }
   }
-  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
+  // 🔑 状态徽章：所有 section 统一宽度(height 34px 同输入框, min-width 96px 显示更全面如"93.5 / 5.2")，布局整齐一致
+  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:96px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 10px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml

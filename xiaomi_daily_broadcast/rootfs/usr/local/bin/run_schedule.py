@@ -103,7 +103,16 @@ def ha_entities():
         except Exception:
             pass
         bl = ds.load_power_baseline()
-        bl_map = bl.get("baselines", {}) if bl.get("date") == datetime.now().strftime("%Y-%m-%d") else {}
+        # 🔑 基准过期/缺失：主动记录当前为基准（和播报 calc_device_energy 一致：当天从0开始算）
+        # 否则跨天后 bl_map 空 → 累计差值不显示（"一开始好用后来不显示"的根因）
+        if bl.get("date") != datetime.now().strftime("%Y-%m-%d"):
+            try:
+                _smap = {s.get("entity_id"): s for s in states}
+                ds.record_power_baseline(_smap, ps)
+                bl = ds.load_power_baseline()
+            except Exception:
+                pass
+        bl_map = bl.get("baselines", {})
         out = []
         for s in states:
             eid = s.get("entity_id", "")
@@ -1227,7 +1236,8 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
       }
     }
   }
-  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
+  // 🔑 状态徽章：所有 section 统一宽度(height 34px 同输入框, min-width 96px 显示更全面如"93.5 / 5.2")，布局整齐一致
+  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:96px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 10px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
