@@ -118,7 +118,12 @@ EDITABLE_SECTIONS = [
 
 
 def load_edit_cfg():
-    """读配置（含 options 合并），供配置页展示。"""
+    """读配置供配置页展示。🔑 读原始 JSON（不规范化）——否则 usage/power_type 被 load_config 降成 room 字符串丢失"""
+    try:
+        if ds.CONFIG_PATH.exists():
+            return json.loads(ds.CONFIG_PATH.read_text())
+    except Exception:
+        pass
     return ds.load_config()
 
 
@@ -175,51 +180,6 @@ def _fetch_all_states():
         return asyncio.run(_get())
     except Exception:
         return {}
-
-
-def stop_speaker(notify_entity):
-    """⏹ 停止音箱播放：
-    1. intelligent_speaker 发"停止播放"文字指令（实测能停小米云 TTS）
-    2. media_play_pause（Pro8 支持的暂停；media_stop 因缺 feature 被拒不可用）"""
-    import websockets
-    try:
-        ws_url, token = _ws_connect()
-        async def _stop():
-            async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
-                await ws.recv()
-                await ws.send(json.dumps({"type": "auth", "access_token": token}))
-                await ws.recv()
-                # 找到所有小米音箱 media_player（xiao_ai / x08a / xiaomi_x 都匹配）
-                await ws.send(json.dumps({"type": "get_states", "id": 1}))
-                r = json.loads(await ws.recv())
-                mp_targets = []
-                for s in r.get("result", []):
-                    eid = s.get("entity_id", "")
-                    low = eid.lower()
-                    if eid.startswith("media_player.") and ("xiao_ai" in low or "x08a" in low or "xiaomi" in low):
-                        mp_targets.append(eid)
-                log(f"⏹ 停止音箱: {mp_targets}")
-                for eid in mp_targets:
-                    # 1. intelligent_speaker 发"停止播放"（能停 TTS）
-                    try:
-                        await ws.send(json.dumps({"type": "call_service", "domain": "xiaomi_miot",
-                                                  "service": "intelligent_speaker",
-                                                  "service_data": {"entity_id": eid, "text": "停止播放", "execute": True},
-                                                  "id": 10}))
-                        await ws.recv()
-                    except Exception:
-                        pass
-                    # 2. media_play_pause（Pro8 支持的暂停）
-                    try:
-                        await ws.send(json.dumps({"type": "call_service", "domain": "media_player",
-                                                  "service": "media_play_pause",
-                                                  "service_data": {"entity_id": eid}, "id": 11}))
-                        await ws.recv()
-                    except Exception:
-                        pass
-        asyncio.run(_stop())
-    except Exception as e:
-        log(f"⚠️ 停止音箱失败: {e}")
 
 
 def ensure_button_entity():
@@ -492,25 +452,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         import urllib.parse as up
         q = up.parse_qs(up.urlsplit(self.path).query)
-        if path == "/stop":
-            # ⏹ 停止播报：停音箱 + 清状态 + 释放锁
-            try:
-                cfg = ds.load_config()
-                notify_entity = cfg.get("speaker_notify", "")
-                stop_speaker(notify_entity)
-                STATE_FILE.write_text(json.dumps({"status": "idle", "sentences": [], "played_to": 0,
-                                                  "run_id": "", "mode": "speech", "summary_type": "", "phase": ""}))
-                # 释放锁（可能被卡住的播报占着）
-                try:
-                    if LOCK.locked():
-                        LOCK.release()
-                except Exception:
-                    pass
-                log("⏹ 已停止播报")
-                self._send(200, json.dumps({"ok": True}), "application/json")
-            except Exception as e:
-                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
-        elif path == "/trigger":
+        if path == "/trigger":
             t = (q.get("type") or ["daily"])[0]
             # 用 startswith("true")：兼容历史 URL 里 Date.now() 粘在 true 后面变成 true1694 的情况
             to = (q.get("text_only") or ["false"])[0].lower().startswith("true")
@@ -610,9 +552,9 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
-  #btnSpeak,#btnText,#btnClear,#btnEntities,#btnStop{transition:background .2s}
-  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active,#btnStop.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
-  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active),#btnStop:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
+  #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
+  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
+  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -680,7 +622,6 @@ WEBUI_HTML = """<!DOCTYPE html>
       <button id=\"btnText\" onclick=\"trigger(true)\">📝 文字播报</button>
       <button id=\"btnClear\" onclick=\"clearLog()\">🗑️ 清空日志</button>
       <button id=\"btnEntities\" onclick=\"showEntities()\">🔑 传感器实体</button>
-      <button id=\"btnStop\" onclick=\"stopBroadcast()\">⏹ 停止</button>
     </div>
     <div id=\"status\">就绪</div>
   </div>
@@ -766,7 +707,15 @@ var SECTIONS=[
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}
 
+var cfgDirty=false;  // 🔑 配置页是否有未保存修改
+function markDirty(){ cfgDirty=true; }
 function showPage(p){
+  // 🔑 从配置页切走时，若有未保存修改则提醒
+  if(cfgDirty && p!=='cfg'){
+    var ok=confirm('传感器配置有未保存的修改，要保存吗？');
+    if(ok){ saveCfg(); }
+    cfgDirty=false;
+  }
   document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
   document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
   document.getElementById('tabHist').className='tab'+(p==='hist'?' on':'');
@@ -822,6 +771,9 @@ function loadCfgPage(){
     }else{
       document.getElementById('cfgStatus').textContent='❌ 实体加载失败: '+(er.error||'未知错误');
     }
+    // 音箱下拉变更也算修改，标记 dirty
+    var sp=document.getElementById('cfg-speaker');
+    if(sp) sp.onchange=markDirty;
   });
 }
 
@@ -891,6 +843,7 @@ function pickCandidate(key, eid){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
   box.insertAdjacentHTML('beforeend', entryHTML(sec, eid, ''));
+  markDirty();
   collectSection(key);
   document.getElementById('cand-'+key).innerHTML='';
   var si=document.getElementById('search-'+key); if(si) si.value='';
@@ -951,6 +904,7 @@ function addEntry(key){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
   box.insertAdjacentHTML('beforeend', entryHTML(sec,'','',true));
+  markDirty();
   hideAllCands();
 }
 
@@ -978,16 +932,18 @@ function manualEid(el,key){
   var ins=box.querySelectorAll('.entry input');
   var eid=el.value.trim();
   // 收集该条目：实体 id + 房间名
+  markDirty();
   collectSection(key);
 }
 
 // 房间名输入：实时收集
-function onRoom(el,key){ collectSection(key); }
+function onRoom(el,key){ markDirty(); collectSection(key); }
 
 // 删除条目：直接删 DOM，删除后重新收集 CONFIG（不再用索引，用按钮定位父元素）
 function delEntry(key,btn){
   var entry=btn.closest('.entry');
   if(entry) entry.remove();
+  markDirty();
   collectSection(key);
 }
 
@@ -1008,6 +964,7 @@ function saveCfg(){
     .then(function(r){return r.json()})
     .then(function(d){
       document.getElementById('cfgStatus').textContent = d.ok?'✅ 已保存':'❌ 保存失败';
+      if(d.ok) cfgDirty=false;
     })
     .catch(function(){document.getElementById('cfgStatus').textContent='❌ 保存失败';});
 }
@@ -1031,21 +988,9 @@ function changeEngine(){
 }
 // 🔑 按钮互斥高亮：点哪个哪个蓝底，其他恢复灰边
 function setActive(id){
-  ['btnSpeak','btnText','btnClear','btnEntities','btnStop'].forEach(function(b){
+  ['btnSpeak','btnText','btnClear','btnEntities'].forEach(function(b){
     document.getElementById(b).className = (b===id) ? 'active' : '';
   });
-}
-/* ─── 停止播报 ─── */
-function stopBroadcast(){
-  setActive('btnStop');
-  fetch(BASE+'stop',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-    document.getElementById('status').textContent = d.ok ? '⏹ 已停止播报' : '❌ 停止失败';
-    // 清空文字区
-    var out=document.getElementById('textOut');
-    if(out) out.textContent='';
-    var tc=document.getElementById('textCard');
-    if(tc) tc.style.display='none';
-  }).catch(function(){document.getElementById('status').textContent='❌ 停止失败';});
 }
 function trigger(textOnly){
   var t=document.getElementById('type').value;
