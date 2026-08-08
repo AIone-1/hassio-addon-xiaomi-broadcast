@@ -262,11 +262,12 @@ def weather_forecast():
         return []
 
 
-def generate_week(section, cfg):
-    """🤖 用大模型生成未来 7 天（今天起）的文案：问候语/结束语/小贴士。
+def generate_week(section, cfg, dates=None):
+    """🤖 用大模型生成文案：问候语/结束语/小贴士。默认未来 7 天（今天起）；
+    传 dates=[date] 可只生成某一天（自动更新用）。
     输入每天的实际日期、星期、节日、周末、天气，避免千篇一律。
     返回 {"ok": bool, "days": {"YYYY-MM-DD": text}, "error": str}。
-    days 可能不满 7 天——缺的日期播报时自动用默认文案。"""
+    days 可能不满请求天数——缺的日期播报时自动用默认文案。"""
     if section not in SECTION_META:
         return {"ok": False, "days": {}, "error": "section 必须是 greeting/ending/tip"}
     name, req = SECTION_META[section]
@@ -277,12 +278,14 @@ def generate_week(section, cfg):
         return {"ok": False, "days": {}, "error": "未配置大模型引擎（base_url）"}
     try:
         import re as _re
-        # 未来 7 天实际情况：日期 + 星期 + 节日 + 周末 + 天气
-        today = datetime.now().date()
+        # 要生成的日期列表：默认未来 7 天
+        if not dates:
+            today = datetime.now().date()
+            dates = [today + timedelta(days=i) for i in range(7)]
+        n = len(dates)
         weather = weather_forecast()
         lines_ctx = []
-        for i in range(7):
-            d = today + timedelta(days=i)
+        for d in dates:
             parts = f"{d:%Y-%m-%d} {WEEKDAY_CN[d.weekday()]}"
             fest = FESTIVALS.get(d.strftime("%m-%d"), "")
             if fest:
@@ -297,12 +300,12 @@ def generate_week(section, cfg):
             lines_ctx.append(parts)
 
         system = (
-            f"你是温暖亲切的家庭播报文案写手。请给未来 7 天各写{name}：{req}。\n"
+            f"你是温暖亲切的家庭播报文案写手。请为下面 {n} 个日期各写{name}：{req}。\n"
             "格式要求：每天一行，行首必须是 YYYY-MM-DD 日期加冒号，后面接文案。\n"
-            "只输出 7 行，不要任何解释、空行、编号或 Markdown。\n"
+            f"只输出 {n} 行，不要任何解释、空行、编号或 Markdown。\n"
             "口语化、适合语音朗读，不要表情符号、括号、引号、英文。"
         )
-        user = "未来 7 天实际情况：\n" + "\n".join(lines_ctx) + "\n\n请按格式输出 7 行" + name + "。"
+        user = "这些日期实际情况：\n" + "\n".join(lines_ctx) + f"\n\n请按格式输出 {n} 行{name}。"
         import urllib.request as _ur
         url = base + "/v1/messages"
         hdrs = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
@@ -331,11 +334,60 @@ def generate_week(section, cfg):
                     days[m.group(1)] = t
         if not days:
             return {"ok": False, "days": {}, "error": "没解析出任何日期文案"}
-        log(f"🤖 已生成一周{name}（{len(days)}天）")
+        log(f"🤖 已生成{name}（{len(days)}天）")
         return {"ok": True, "days": days, "error": ""}
     except Exception as e:
-        log(f"⚠️ 生成一周{name}失败: {e}")
+        log(f"⚠️ 生成{name}失败: {e}")
         return {"ok": False, "days": {}, "error": str(e)}
+
+
+def generate_one(section, cfg, date_str):
+    """🤖 只生成某一天的文案（自动更新用，每天零点刷新当天）。"""
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        return generate_week(section, cfg, [d])
+    except ValueError:
+        return {"ok": False, "days": {}, "error": f"日期格式不对: {date_str}"}
+
+
+# 大模型文案自动更新：开自动更新=每天零点刷新当天；关=每 7 天（窗口滚出当天）更新一回
+LLM_SECTIONS = ("greeting", "ending", "tip")
+
+def llm_auto_refresh():
+    """按配置刷新大模型生成的文案（greeting/ending/tip 的 <x>_llm_days）。
+    - <x>_llm_autoupdate 开：生成当天这一条（日期变更时调用）
+    - 关：当天不在 <x>_llm_days 里（7天窗口滚出）→ 重新生成未来 7 天
+    生成结果合并进 <x>_llm_days（清掉早于今天的旧条目）。"""
+    try:
+        cfg = ds.load_config()
+        ts = cfg.get("template_settings") or {}
+        today = datetime.now().strftime("%Y-%m-%d")
+        changed = False
+        for prefix in LLM_SECTIONS:
+            if ts.get(prefix + "_mode") != "llm":
+                continue
+            llm_days = ts.get(prefix + "_llm_days") or {}
+            auto = ts.get(prefix + "_llm_autoupdate") is True
+            if auto:
+                res = generate_one(prefix, cfg, today)      # 刷新当天
+            elif today not in llm_days:
+                res = generate_week(prefix, cfg)            # 7天窗口滚出 → 重新生成一周
+            else:
+                continue
+            if res.get("ok") and res.get("days"):
+                merged = dict(llm_days)
+                for k, v in res["days"].items():
+                    merged[k] = v
+                # 清掉早于今天的旧条目（只留今天及以后）
+                for k in [k for k in merged if k < today]:
+                    del merged[k]
+                ts[prefix + "_llm_days"] = merged
+                changed = True
+                log(f"🤖 自动更新{prefix}完成（{'当天' if auto else '一周'}，共{len(merged)}条）")
+        if changed:
+            save_edit_cfg({"template_settings": ts})
+    except Exception as e:
+        log(f"⚠️ LLM 文案自动更新失败: {e}")
 
 
 def ensure_button_entity():
@@ -521,6 +573,11 @@ def scheduler_loop():
                             log(f"📊 已记录今日累计电量基准 ({today})")
                 except Exception as e:
                     log(f"⚠️ 记录电量基准失败: {e}")
+                # 🔑 每天 0 点（日期变更）：LLM 文案自动更新（开=刷新当天，关=7天窗口滚出才重生成）
+                try:
+                    threading.Thread(target=llm_auto_refresh, daemon=True).start()
+                except Exception as e:
+                    log(f"⚠️ LLM 文案自动更新启动失败: {e}")
                 last_base_date = today
 
             cfg = ds.load_config()
@@ -679,7 +736,7 @@ class Handler(BaseHTTPRequestHandler):
                 res = generate_week(section, ds.load_config())
                 if res.get("ok") and res.get("days"):
                     cfg = json.loads(ds.CONFIG_PATH.read_text()) if ds.CONFIG_PATH.exists() else {}
-                    cfg.setdefault("template_settings", {})[section + "_days"] = res["days"]
+                    cfg.setdefault("template_settings", {})[section + "_llm_days"] = res["days"]
                     save_edit_cfg({"template_settings": cfg["template_settings"]})
                 self._send(200, json.dumps(res, ensure_ascii=False), "application/json")
             except Exception as e:
@@ -1177,14 +1234,14 @@ document.addEventListener('click',function(ev){
 /* ─── 模板播报配置 ─── */
 var TPL_GROUPS=[
   {title:'播报文案',open:true,weekPanel:true,groups:[
-    {name:'问候语',modeKey:'greeting_mode',weekKey:'greeting_days',loopKey:'greeting_loop_enabled',help:'7条留空的天，播报时用下面的默认。',defFields:[
+    {name:'问候语',modeKey:'greeting_mode',weekKey:'greeting_days',llmWeekKey:'greeting_llm_days',loopKey:'greeting_loop_enabled',help:'手动和大模型内容各自独立，互不覆盖。留空的天播报时用下面的默认。',defFields:[
       {k:'workday_desc',label:'工作日描述（问候留空时用）',def:'工作日辛苦了',type:'text'},
       {k:'weekend_desc',label:'周末描述（问候留空时用）',def:'周末愉快',type:'text'},
     ]},
-    {name:'结束语',modeKey:'ending_mode',weekKey:'ending_days',loopKey:'ending_loop_enabled',help:'7条留空的天，播报时用下面的默认。',defFields:[
+    {name:'结束语',modeKey:'ending_mode',weekKey:'ending_days',llmWeekKey:'ending_llm_days',loopKey:'ending_loop_enabled',help:'手动和大模型内容各自独立，互不覆盖。留空的天播报时用下面的默认。',defFields:[
       {k:'ending_text',label:'默认结束语（留空用按时间段的默认）',def:'',type:'textarea'},
     ]},
-    {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',loopKey:'tip_loop_enabled',help:'7条留空的天，播报时用默认小贴士。',defFields:[]},
+    {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',llmWeekKey:'tip_llm_days',loopKey:'tip_loop_enabled',help:'手动和大模型内容各自独立，互不覆盖。留空的天播报时用默认小贴士。',defFields:[]},
   ]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
@@ -1328,14 +1385,18 @@ function renderWeekPanel(ts){
   h+='</div>';
   if(mode==='llm'){
     h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:6px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
-    h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">切换模式不会自动生成，点上面的按钮才生成。</div>';
+    h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">点上面的按钮才生成（切换模式不会自动生成）。生成内容单独存放，不影响手动填写的。</div>';
+    // 🔑 大模型模式：自动更新开关（开=每天零点刷新当天；关=每7天自动更新一回）
+    var autoKey=g.llmWeekKey.replace('_llm_days','_llm_autoupdate');
+    var autoOn=ts[autoKey]===true;
+    h+='<label class="eng-check" style="display:block;margin-bottom:8px"><input type="checkbox" data-tpl="'+autoKey+'" '+(autoOn?'checked':'')+' onchange="llmAutoToggle(this,\\''+autoKey+'\\')"> 自动更新：每天零点自动刷新当天的'+g.name+'（不勾选则每7天自动更新一回）</label>';
   }else{
     // 🔑 手动模式：7天循环开关（这7条每周循环用，不用每周改日期）
     var loopOn=ts[g.loopKey]===true;
     h+='<label class="eng-check" style="display:block;margin-bottom:8px"><input type="checkbox" data-tpl="'+g.loopKey+'" '+(loopOn?'checked':'')+' onchange="weekLoopToggle(this,\\''+g.loopKey+'\\')"> 7天循环（这7条每周重复用，不用每周改日期）</label>';
   }
-  // 未来 7 天一列（日期 + 文案，清晰明了）
-  var days=ts[g.weekKey]||{};
+  // 未来 7 天一列（日期 + 文案，清晰明了）：大模型读 llm_days，手动读 days
+  var days=(mode==='llm')?(ts[g.llmWeekKey]||{}):(ts[g.weekKey]||{});
   var labels=weekLabels();
   h+='<div style="display:flex;flex-direction:column;gap:6px">';
   for(var i=0;i<7;i++){
@@ -1410,10 +1471,10 @@ function weekLabels(){
   }
   return out;
 }
-// 🤖 调后端生成未来7天文案并存到 template_settings（问候语/结束语/小贴士）
+// 🤖 调后端生成未来7天文案，存到大模型的独立存储（不影响手动填写的）
 function genWeek(si){
   var g=TPL_GROUPS[0].groups[si];
-  var secName=g.weekKey.replace('_days','');
+  var secName=g.llmWeekKey.replace('_llm_days','');
   var statusEl=document.getElementById('tplStatus');
   statusEl.textContent='🤖 正在生成未来7天'+g.name+'（约30秒）...';
   fetch(BASE+'tpl/week',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:secName})})
@@ -1421,7 +1482,7 @@ function genWeek(si){
     .then(function(d){
       if(d.ok && d.days){
         var ts=CONFIG.template_settings||{};
-        ts[g.weekKey]=d.days;
+        ts[g.llmWeekKey]=d.days;
         CONFIG.template_settings=ts;
         markDirty();
         renderTplCfg();
@@ -1431,6 +1492,13 @@ function genWeek(si){
       }
     })
     .catch(function(){statusEl.textContent='❌ 生成失败（网络或超时）';});
+}
+// 🔑 大模型自动更新开关：开=每天零点刷新当天；关=每7天更新一回（实时写 CONFIG）
+function llmAutoToggle(el,autoKey){
+  var ts=CONFIG.template_settings||{};
+  ts[autoKey]=el.checked;
+  CONFIG.template_settings=ts;
+  markDirty();
 }
 function saveTpl(){
   // 🔑 收集模板配置并保存

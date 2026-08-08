@@ -315,10 +315,21 @@ def _week_loop_match(ts_cfg, prefix, today_str):
 
 
 def week_day_text(config, prefix, today_str):
-    """读模板配置的文案取当天内容。优先级：当天缓存 <prefix>_days[date] > 7天循环（按星期几）。
+    """读模板配置的文案取当天内容。手动和大模型**独立存储**，互不覆盖：
+    - <prefix>_mode == "llm" → 读 <prefix>_llm_days[date]（大模型生成的）
+    - 否则（manual）→ 读 <prefix>_days[date]（手动填的）> 7天循环（按星期几）
     prefix: greeting / ending / tip。都没有返回 None，上层回退默认逻辑。"""
     try:
         ts_cfg = config.get("template_settings") or {}
+        mode = ts_cfg.get(prefix + "_mode", "manual")
+        if mode == "llm":
+            llm_days = ts_cfg.get(prefix + "_llm_days") or {}
+            if isinstance(llm_days, dict):
+                v = llm_days.get(today_str)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            return None
+        # 手动填写
         days = ts_cfg.get(prefix + "_days") or {}
         if isinstance(days, dict):
             v = days.get(today_str)
@@ -955,18 +966,20 @@ def generate_with_llm(report, config):
 
 def build_ending(h):
     """按时间段返回播报结束语。模板和 LLM 引擎共用，保证每次都有收尾。
-    优先级：手动结束语(ending_text) > 7天循环结束语(按星期几) > 默认。"""
+    手动模式：手动结束语(ending_text) > 7天循环结束语(按星期几) > 默认。
+    LLM 模式：结束语由大模型生成（ending_llm_days，week_day_text 已读）；这里只兜底默认。"""
     cfg = load_config()
     try:
         ts2 = cfg.get("template_settings") or {}
-        if ts2.get("ending_mode") == "manual":
-            manual_end = (ts2.get("ending_text") or "").strip()
-            if manual_end:
-                return manual_end
-        # 7天循环结束语：按星期几匹配（循环开关开了才生效）
-        loop_end = _week_loop_match(ts2, "ending", datetime.now().strftime("%Y-%m-%d"))
-        if loop_end:
-            return loop_end
+        if ts2.get("ending_mode") != "llm":
+            if ts2.get("ending_mode") == "manual":
+                manual_end = (ts2.get("ending_text") or "").strip()
+                if manual_end:
+                    return manual_end
+            # 7天循环结束语：按星期几匹配（循环开关开了才生效，仅手动模式）
+            loop_end = _week_loop_match(ts2, "ending", datetime.now().strftime("%Y-%m-%d"))
+            if loop_end:
+                return loop_end
     except Exception:
         pass
     if h < 12:
