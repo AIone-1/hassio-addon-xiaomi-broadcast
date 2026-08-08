@@ -89,15 +89,39 @@ def ha_entities():
                                      headers={"Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             states = json.loads(resp.read())
+        # 🔑 累计差值用电（power_type=accumulate）：附带今日差值 = 当前累计 - 今日基准
+        # 前端状态徽章显示"实际值 / 差值"，方便用户核对播报数字
+        calc_map = {}
+        try:
+            cfg = ds.load_config()
+            ps = cfg.get("power_sensors") or {}
+            for eid, meta in ps.items():
+                if eid.startswith("_"):
+                    continue
+                if isinstance(meta, dict) and meta.get("power_type") == "accumulate":
+                    calc_map[eid] = True
+        except Exception:
+            pass
+        bl = ds.load_power_baseline()
+        bl_map = bl.get("baselines", {}) if bl.get("date") == datetime.now().strftime("%Y-%m-%d") else {}
         out = []
         for s in states:
             eid = s.get("entity_id", "")
-            out.append({
+            item = {
                 "entity_id": eid,
                 "name": s.get("attributes", {}).get("friendly_name", ""),
                 "state": s.get("state", ""),
                 "domain": eid.split(".")[0],
-            })
+            }
+            if eid in calc_map:
+                try:
+                    cur = float(s.get("state", "")) if s.get("state", "") not in ("unavailable", "unknown", "") else None
+                except (ValueError, TypeError):
+                    cur = None
+                base = bl_map.get(eid)
+                if cur is not None and base is not None:
+                    item["calc"] = round(max(0.0, cur - base), 2)
+            out.append(item)
         return {"ok": True, "count": len(out), "entities": out, "error": ""}
     except Exception as e:
         err = str(e)
@@ -1074,13 +1098,15 @@ function updateStateBadges(){
     var eid=e.getAttribute('data-raw')||'';
     var badge=e.querySelector('[data-state-badge]');
     if(!badge) return;
-    var st='';
+    var st='', calc;
     for(var i=0;i<ENTITIES.length;i++){
-      if(ENTITIES[i].entity_id===eid){ st=ENTITIES[i].state||''; break; }
+      if(ENTITIES[i].entity_id===eid){ st=ENTITIES[i].state||''; calc=ENTITIES[i].calc; break; }
     }
     if(st==='on') st='✅ 开';
     else if(st==='off') st='⭕ 关';
     else if(st==='unavailable'||st==='unknown') st='⚠️ 无';
+    // 🔑 累计差值用电：徽章显示"实际值 / 差值"
+    if(calc!==undefined && st && !/^[✅⭕⚠️]/.test(st)) st+=' / '+calc;
     badge.textContent=st?st:'-';
   });
 }
@@ -1159,10 +1185,11 @@ function pickCandidate(key, eid){
 
 function entryHTML(sec, eid, room, usage, ptype, editable){
   var ph=sec.room?'房间名':'标签';
-  // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
+  // 🔑 editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
+  // 但只读的已添加实体支持"双击编辑"（去掉 readonly 编辑，失焦恢复）
   var eidAttr = editable
     ? 'placeholder="填实体 id" oninput="manualEid(this,\\''+sec.key+'\\')"'
-    : 'readonly';
+    : 'readonly ondblclick="editEid(this)" onblur="eidBlur(this,\\''+sec.key+'\\')"';
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
     : 'flex:1.4;min-width:180px;background:transparent;border:1px solid var(--border);color:var(--text)';
@@ -1178,6 +1205,7 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
   }
   // 🔑 实时状态：从 ENTITIES 找该实体的当前 state 显示（在用途前）
   var st='';
+  var calcTxt='';
   if(eid){
     var found=null;
     for(var i=0;i<ENTITIES.length;i++){
@@ -1189,9 +1217,13 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
       if(st==='on') st='✅ 开';
       else if(st==='off') st='⭕ 关';
       else if(st==='unavailable'||st==='unknown') st='⚠️ 无';
+      // 🔑 累计差值用电：后端附带 calc（今日差值），徽章显示"实际值 / 差值"
+      if(found.calc!==undefined && st && !/^[✅⭕⚠️]/.test(st)){
+        calcTxt=' / '+found.calc;
+      }
     }
   }
-  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st):'-')+'</span>';
+  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
@@ -1200,6 +1232,19 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
     +typeSel
     +'<button class="del" onclick="delEntry(\\''+sec.key+'\\',this)">✕</button>'
     +'</div>';
+}
+// 🔑 双击已添加的实体 id → 允许编辑（去掉 readonly）；失焦恢复 + 同步配置
+function editEid(inp){
+  inp.readOnly=false;
+  inp.focus();
+  inp.select();
+}
+function eidBlur(inp,key){
+  if(!inp.readOnly){
+    inp.readOnly=true;
+    markDirty();
+    collectSection(key);
+  }
 }
 
 // 收集每段当前条目到 CONFIG（读 DOM 里的 .entry）
@@ -1228,7 +1273,8 @@ function collectSection(key){
 function addEntry(key){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  box.insertAdjacentHTML('beforeend', entryHTML(sec,'','',true));
+  // 🔑 参数顺序：(sec, eid, room, usage, ptype, editable)——第6个才是 editable！
+  box.insertAdjacentHTML('beforeend', entryHTML(sec,'','','','daily',true));
   markDirty();
   hideAllCands();
 }
