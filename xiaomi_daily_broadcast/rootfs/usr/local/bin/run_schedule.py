@@ -724,6 +724,7 @@ function showPage(p){
   document.getElementById('page-cfg').className='page'+(p==='cfg'?' on':'');
   document.getElementById('page-hist').className='page'+(p==='hist'?' on':'');
   if(p==='cfg'){ loadCfgPage(); }
+  else { stopStatePoll(); }
   if(p==='hist'){ loadHist(); }
 }
 
@@ -775,6 +776,39 @@ function loadCfgPage(){
     // 音箱下拉变更也算修改，标记 dirty
     var sp=document.getElementById('cfg-speaker');
     if(sp) sp.onchange=markDirty;
+  });
+  startStatePoll();
+}
+// 🔑 实时状态轮询：每5秒刷新实体状态，更新配置页里的状态徽章
+var stateTimer=null;
+function startStatePoll(){
+  if(stateTimer) clearInterval(stateTimer);
+  stateTimer=setInterval(function(){
+    fetch(BASE+'cfg/entities?_='+Date.now()).then(function(r){return r.json()}).then(function(d){
+      if(d && d.ok && d.entities){
+        ENTITIES=d.entities;
+        updateStateBadges();
+      }
+    }).catch(function(){});
+  },5000);
+}
+function stopStatePoll(){
+  if(stateTimer){ clearInterval(stateTimer); stateTimer=null; }
+}
+// 更新页面里所有状态徽章（.entry 里的 [data-state] 元素）
+function updateStateBadges(){
+  document.querySelectorAll('#page-cfg .entry').forEach(function(e){
+    var eid=e.getAttribute('data-raw')||'';
+    var badge=e.querySelector('[data-state-badge]');
+    if(!badge) return;
+    var st='';
+    for(var i=0;i<ENTITIES.length;i++){
+      if(ENTITIES[i].entity_id===eid){ st=ENTITIES[i].state||''; break; }
+    }
+    if(st==='on') st='✅ 开';
+    else if(st==='off') st='⭕ 关';
+    else if(st==='unavailable'||st==='unknown') st='⚠️ 无';
+    badge.textContent=st?st:'-';
   });
 }
 
@@ -869,8 +903,25 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
     });
     typeSel='<select style=\"flex:1;min-width:120px;height:34px;padding:0 8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)\" onchange=\"onRoom(this,\\''+sec.key+'\\')\">'+ohtml+'</select>';
   }
+  // 🔑 实时状态：从 ENTITIES 找该实体的当前 state 显示（在用途前）
+  var st='';
+  if(eid){
+    var found=null;
+    for(var i=0;i<ENTITIES.length;i++){
+      if(ENTITIES[i].entity_id===eid){ found=ENTITIES[i]; break; }
+    }
+    if(found){
+      st=found.state||'';
+      // 状态友好显示
+      if(st==='on') st='✅ 开';
+      else if(st==='off') st='⭕ 关';
+      else if(st==='unavailable'||st==='unknown') st='⚠️ 无';
+    }
+  }
+  var stateHtml='<span data-state-badge style=\"flex:0 0 auto;min-width:52px;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap\">'+(st?esc(st):'-')+'</span>';
   return '<div class=\"entry\" data-raw=\"'+esc(eid)+'\">'
     +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
+    +stateHtml
     +'<input type=\"text\" value=\"'+esc(usage||'')+'\" placeholder=\"用途\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
     +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
     +typeSel
