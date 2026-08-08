@@ -1177,14 +1177,14 @@ document.addEventListener('click',function(ev){
 /* ─── 模板播报配置 ─── */
 var TPL_GROUPS=[
   {title:'播报文案',open:true,weekPanel:true,groups:[
-    {name:'问候语',modeKey:'greeting_mode',weekKey:'greeting_days',help:'留空的天播报时用默认问候。'},
-    {name:'结束语',modeKey:'ending_mode',weekKey:'ending_days',help:'留空的天播报时用默认结束语。'},
-    {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',help:'留空的天播报时用默认小贴士。'},
-  ]},
-  {title:'默认文案',open:false,fields:[
-    {k:'workday_desc',label:'工作日描述（问候留空时用）',def:'工作日辛苦了',type:'text'},
-    {k:'weekend_desc',label:'周末描述（问候留空时用）',def:'周末愉快',type:'text'},
-    {k:'ending_text',label:'默认结束语（留空用按时间段的默认）',def:'',type:'textarea'},
+    {name:'问候语',modeKey:'greeting_mode',weekKey:'greeting_days',loopKey:'greeting_loop_enabled',help:'7条留空的天，播报时用下面的默认。',defFields:[
+      {k:'workday_desc',label:'工作日描述（问候留空时用）',def:'工作日辛苦了',type:'text'},
+      {k:'weekend_desc',label:'周末描述（问候留空时用）',def:'周末愉快',type:'text'},
+    ]},
+    {name:'结束语',modeKey:'ending_mode',weekKey:'ending_days',loopKey:'ending_loop_enabled',help:'7条留空的天，播报时用下面的默认。',defFields:[
+      {k:'ending_text',label:'默认结束语（留空用按时间段的默认）',def:'',type:'textarea'},
+    ]},
+    {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',loopKey:'tip_loop_enabled',help:'7条留空的天，播报时用默认小贴士。',defFields:[]},
   ]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
@@ -1303,7 +1303,7 @@ function renderTplCfg(){
     inp.addEventListener('input',markDirty);
   });
 }
-// 🔑 播报文案面板：问候语/结束语/小贴士 子 tab + 模式切换 + 未来 7 天网格
+// 🔑 播报文案面板：问候语/结束语/小贴士 子 tab + 模式切换 + 未来 7 天一列 + 默认文案并入
 function renderWeekPanel(ts){
   var sub=TPL_GROUPS[0].groups;
   var active=(typeof ts._activeWeek==='number')?ts._activeWeek:0;
@@ -1330,21 +1330,19 @@ function renderWeekPanel(ts){
     h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:6px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
     h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">切换模式不会自动生成，点上面的按钮才生成。</div>';
   }else{
-    // 🔑 手动模式：循环文案（填一条每天都用，优先于逐天）+ 7 天逐天
-    var loopKey=g.weekKey.replace('_days','_loop');
-    var loopVal=ts[loopKey]||'';
-    h+='<label class="eng-label">循环文案（每天都用这一条）</label>';
-    h+='<input class="eng-input" type="text" value="'+esc(loopVal)+'" placeholder="填一条，每天都循环用它；留空则用下面逐天的，或默认" oninput="weekLoopInput(this,\\''+loopKey+'\\')" style="width:100%;box-sizing:border-box;margin-bottom:8px">';
+    // 🔑 手动模式：7天循环开关（这7条每周循环用，不用每周改日期）
+    var loopOn=ts[g.loopKey]===true;
+    h+='<label class="eng-check" style="display:block;margin-bottom:8px"><input type="checkbox" data-tpl="'+g.loopKey+'" '+(loopOn?'checked':'')+' onchange="weekLoopToggle(this,\\''+g.loopKey+'\\')"> 7天循环（这7条每周重复用，不用每周改日期）</label>';
   }
-  // 未来 7 天网格（2 列，窄屏自动 1 列）
+  // 未来 7 天一列（日期 + 文案，清晰明了）
   var days=ts[g.weekKey]||{};
   var labels=weekLabels();
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px">';
+  h+='<div style="display:flex;flex-direction:column;gap:6px">';
   for(var i=0;i<7;i++){
     var w=labels[i];
     var val=days[w.ds]||'';
     h+='<div style="display:flex;gap:6px;align-items:center;min-width:0">';
-    h+='<div style="flex:0 0 82px;font-size:11px;color:var(--dim);white-space:nowrap">'+w.lbl+'</div>';
+    h+='<div style="flex:0 0 88px;font-size:11px;color:var(--dim);white-space:nowrap">'+w.lbl+'</div>';
     if(mode==='llm'){
       h+='<div style="flex:1;font-size:12px;color:var(--accent2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--bg-inset);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(val)+'">'+esc(val||'（未生成）')+'</div>';
     }else{
@@ -1353,6 +1351,21 @@ function renderWeekPanel(ts){
     h+='</div>';
   }
   h+='</div>';
+  // 🔑 默认文案（合并到本面板：7条留空的天用）
+  if(g.defFields && g.defFields.length){
+    h+='<div style="border-top:1px dashed var(--border);margin-top:10px;padding-top:8px">';
+    h+='<div style="font-size:11px;color:var(--dim);margin-bottom:6px">🎯 默认文案（上面留空的天用）</div>';
+    g.defFields.forEach(function(f){
+      var val=(ts[f.k]!==undefined)?ts[f.k]:f.def;
+      h+='<label class="eng-label">'+f.label+'</label>';
+      if(f.type==='textarea'){
+        h+='<textarea class="eng-input" data-tpl="'+f.k+'" style="min-height:44px;width:100%;box-sizing:border-box">'+esc(val)+'</textarea>';
+      }else{
+        h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'" style="width:100%;box-sizing:border-box">';
+      }
+    });
+    h+='</div>';
+  }
   h+='<div style="font-size:11px;color:var(--dim);margin-top:8px">ℹ️ '+g.help+'</div>';
   h+='</div></div>';
   return h;
@@ -1451,11 +1464,10 @@ function saveTpl(){
     })
     .catch(function(){document.getElementById('tplStatus').textContent='❌ 保存失败';});
 }
-// 🔑 循环文案输入：填一条每天都用（实时写 CONFIG；空=删）
-function weekLoopInput(el,loopKey){
+// 🔑 7天循环开关：勾上=这7条每周循环用（实时写 CONFIG，切 tab 不丢）
+function weekLoopToggle(el,loopKey){
   var ts=CONFIG.template_settings||{};
-  var v=(el.value||'').trim();
-  if(v) ts[loopKey]=v; else delete ts[loopKey];
+  ts[loopKey]=el.checked;
   CONFIG.template_settings=ts;
   markDirty();
 }

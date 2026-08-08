@@ -291,8 +291,31 @@ def ts_on(config, section):
     return True
 
 
+def _week_loop_match(ts_cfg, prefix, today_str):
+    """7 天循环：循环开关 <prefix>_loop_enabled 开启时，按星期几匹配 <prefix>_days 里同星期几那条（跨周一直循环用）。
+    开关没开 / 没匹配到 → None。"""
+    if not ts_cfg.get(prefix + "_loop_enabled"):
+        return None
+    days = ts_cfg.get(prefix + "_days") or {}
+    if not isinstance(days, dict):
+        return None
+    try:
+        wd = datetime.strptime(today_str, "%Y-%m-%d").weekday()
+        for k, v in days.items():
+            if isinstance(k, str) and len(k) == 10:
+                try:
+                    if datetime.strptime(k, "%Y-%m-%d").weekday() == wd \
+                            and isinstance(v, str) and v.strip():
+                        return v.strip()
+                except ValueError:
+                    continue
+    except Exception:
+        pass
+    return None
+
+
 def week_day_text(config, prefix, today_str):
-    """读模板配置的文案取当天内容。优先级：当天缓存 <prefix>_days[date] > 循环文案 <prefix>_loop（每天都用）。
+    """读模板配置的文案取当天内容。优先级：当天缓存 <prefix>_days[date] > 7天循环（按星期几）。
     prefix: greeting / ending / tip。都没有返回 None，上层回退默认逻辑。"""
     try:
         ts_cfg = config.get("template_settings") or {}
@@ -301,9 +324,7 @@ def week_day_text(config, prefix, today_str):
             v = days.get(today_str)
             if isinstance(v, str) and v.strip():
                 return v.strip()
-        loop = ts_cfg.get(prefix + "_loop")
-        if isinstance(loop, str) and loop.strip():
-            return loop.strip()
+        return _week_loop_match(ts_cfg, prefix, today_str)
     except Exception:
         pass
     return None
@@ -934,17 +955,18 @@ def generate_with_llm(report, config):
 
 def build_ending(h):
     """按时间段返回播报结束语。模板和 LLM 引擎共用，保证每次都有收尾。
-    优先级：循环结束语(ending_loop，每天用) > 手动结束语(ending_text) > 默认。"""
+    优先级：手动结束语(ending_text) > 7天循环结束语(按星期几) > 默认。"""
     cfg = load_config()
     try:
         ts2 = cfg.get("template_settings") or {}
-        loop_end = (ts2.get("ending_loop") or "").strip()
-        if loop_end:
-            return loop_end
         if ts2.get("ending_mode") == "manual":
             manual_end = (ts2.get("ending_text") or "").strip()
             if manual_end:
                 return manual_end
+        # 7天循环结束语：按星期几匹配（循环开关开了才生效）
+        loop_end = _week_loop_match(ts2, "ending", datetime.now().strftime("%Y-%m-%d"))
+        if loop_end:
+            return loop_end
     except Exception:
         pass
     if h < 12:
