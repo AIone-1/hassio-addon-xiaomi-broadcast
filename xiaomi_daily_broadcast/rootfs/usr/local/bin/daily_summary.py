@@ -291,6 +291,25 @@ def ts_on(config, section):
     return True
 
 
+def apply_section_filters(report, config):
+    """🔑 大模型生成前：按模板配置的板块开关，清空 report 里关掉板块的数据。
+    report 字段 → sections 键映射。"""
+    _map = {
+        "temperature": "temp", "temp_alerts": "temp", "humidity_dry": "humidity", "humidity_wet": "humidity",
+        "power": "power", "security": "security", "pm25": "pm25",
+        "lights_on": "lights", "tasks_done": "task", "todos": "todo", "memos": "todo",
+        "faults": "fault", "tip": "tip",
+    }
+    for field, sec in _map.items():
+        if not ts_on(config, sec):
+            if isinstance(report.get(field), list):
+                report[field] = []
+            elif isinstance(report.get(field), dict):
+                report[field] = {}
+            else:
+                report[field] = None
+
+
 def load_power_baseline():
     """读每日累计差值基准：{"date": "2026-08-08", "baselines": {entity_id: value}}"""
     try:
@@ -1528,6 +1547,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
 
             print("  🤖 大模型引擎生成播报...")
             write_broadcast_state('preparing', phase='生成播报稿中', summary_type=summary_type)
+            # 🔑 大模型也遵循模板配置的板块开关：关掉的板块数据从 report 清空
+            apply_section_filters(report, config)
             _t_llm = _t.time()
             llm_sentences = generate_with_llm(report, config)
             print(f"  ⏱️ [main] LLM 调用耗时 {_t.time()-_t_llm:.2f}s")
