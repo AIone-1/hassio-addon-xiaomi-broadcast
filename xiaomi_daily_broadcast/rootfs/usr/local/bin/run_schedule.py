@@ -958,15 +958,34 @@ var SECTIONS=[
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-var cfgDirty=false;  // 🔑 配置页是否有未保存修改
-function markDirty(){ cfgDirty=true; }
+var cfgDirty=false;   // 🔑 传感器配置页是否有未保存修改
+var tplDirty=false;   // 🔑 模板配置页是否有未保存修改
+var currentPage='main';  // 当前所在 tab（markDirty 按它提示对应的页面）
+// 🔑 标记"有未保存的修改"：当前页的状态文字立刻变醒目提示（不再停留在"已保存"）
+function markDirty(){
+  if(currentPage==='cfg'){
+    cfgDirty=true;
+    var cs=document.getElementById('cfgStatus');
+    if(cs){ cs.style.color='#e3b341'; cs.textContent='⚠️ 有未保存的修改'; }
+  }else if(currentPage==='tpl'){
+    tplDirty=true;
+    var ts=document.getElementById('tplStatus');
+    if(ts){ ts.style.color='#e3b341'; ts.textContent='⚠️ 有未保存的修改'; }
+  }
+}
 function showPage(p){
-  // 🔑 从配置页切走时，若有未保存修改则提醒
-  if(cfgDirty && p!=='cfg' && p!=='tpl'){
-    var ok=confirm('配置有未保存的修改，要保存吗？');
+  // 🔑 从配置页切走时，各自页面有未保存修改则提醒（cfg 和 tpl 分开，不再互相清标记）
+  if(p!=='cfg' && cfgDirty){
+    var ok=confirm('传感器配置有未保存的修改，要保存吗？');
     if(ok){ saveCfg(); }
     cfgDirty=false;
   }
+  if(p!=='tpl' && tplDirty){
+    var ok=confirm('模板配置有未保存的修改，要保存吗？');
+    if(ok){ saveTpl(); }
+    tplDirty=false;
+  }
+  currentPage=p;
   document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
   document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
   document.getElementById('tabTpl').className='tab'+(p==='tpl'?' on':'');
@@ -1527,8 +1546,10 @@ function saveTpl(){
   fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:{template_settings:ts}})})
     .then(function(r){return r.json()})
     .then(function(d){
-      document.getElementById('tplStatus').textContent = d.ok?'✅ 模板配置已保存':'❌ 保存失败';
-      if(d.ok) cfgDirty=false;
+      var tplS=document.getElementById('tplStatus');
+      tplS.style.color='';
+      tplS.textContent = d.ok?'✅ 模板配置已保存':'❌ 保存失败';
+      if(d.ok) tplDirty=false;
     })
     .catch(function(){document.getElementById('tplStatus').textContent='❌ 保存失败';});
 }
@@ -1586,7 +1607,9 @@ function saveCfg(){
   fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
     .then(function(r){return r.json()})
     .then(function(d){
-      document.getElementById('cfgStatus').textContent = d.ok?'✅ 已保存':'❌ 保存失败';
+      var cfgS=document.getElementById('cfgStatus');
+      cfgS.style.color='';
+      cfgS.textContent = d.ok?'✅ 已保存':'❌ 保存失败';
       if(d.ok) cfgDirty=false;
     })
     .catch(function(){document.getElementById('cfgStatus').textContent='❌ 保存失败';});
