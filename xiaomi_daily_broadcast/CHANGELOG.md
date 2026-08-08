@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.37 (2026-08-08)
+
+- 📝 传感器配置条目新增"用途"字段（房间名前，可自定义填写）：配置值改为 {room, usage}，后端 load_config 兼容转回 room（旧字符串格式也兼容）
+
 ## 1.1.36 (2026-08-08)
 
 - ⏹ 修复停止不生效：①停音箱改用 media_stop（比 media_pause 强，能停 TTS）；②匹配所有小米音箱 media_player（含 Pro 系 x08a，之前只匹配 xiao_ai 漏掉 Pro8）

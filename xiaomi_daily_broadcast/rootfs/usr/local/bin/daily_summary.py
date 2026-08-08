@@ -135,6 +135,14 @@ def load_config():
                 cfg.setdefault("engine", {})["mode"] = _mode
     except Exception:
         pass
+
+    # 🔑 传感器配置值兼容：新格式 {eid: {room, usage}} 转成 {eid: room}（usage 暂不参与播报，只存展示）
+    for _seg in ("temp_sensors", "humidity_sensors", "power_sensors", "power_now", "lights", "doors", "important_devices"):
+        _s = cfg.get(_seg)
+        if isinstance(_s, dict):
+            for _eid, _val in list(_s.items()):
+                if isinstance(_val, dict):
+                    _s[_eid] = _val.get("room", "")
     return cfg
 
 

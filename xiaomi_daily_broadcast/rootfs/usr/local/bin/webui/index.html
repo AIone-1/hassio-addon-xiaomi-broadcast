@@ -255,7 +255,11 @@ function renderSections(){
     h+='<div class="search-row"><input type="text" placeholder="🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）" onfocus="onSearch(\''+sec.key+'\')" oninput="onSearch(\''+sec.key+'\')" id="search-'+sec.key+'"></div>';
     h+='<div id="sec-'+sec.key+'">';
     entries.forEach(function(pair){
-      h+=entryHTML(sec, pair[0], pair[1]);
+      // 兼容旧值(字符串=房间名)和新值({room,usage})
+      var v=pair[1];
+      var room=(typeof v==='string')?v:(v&&v.room||'');
+      var usage=(typeof v==='object'&&v)?(v.usage||''):'';
+      h+=entryHTML(sec, pair[0], room, usage);
     });
     h+='</div>';
     h+='<div id="cand-'+sec.key+'"></div>';
@@ -309,7 +313,7 @@ function pickCandidate(key, eid){
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, editable){
+function entryHTML(sec, eid, room, usage, editable){
   var ph=sec.room?'房间名':'标签';
   // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   var eidAttr = editable
@@ -320,6 +324,7 @@ function entryHTML(sec, eid, room, editable){
     : 'flex:1.4;min-width:180px;background:transparent;border:1px solid var(--border);color:var(--text)';
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
+    +'<input type="text" value="'+esc(usage||'')+'" placeholder="用途" oninput="onRoom(this,\''+sec.key+'\')">'
     +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="onRoom(this,\''+sec.key+'\')">'
     +'<button class="del" onclick="delEntry(\''+sec.key+'\',this)">✕</button>'
     +'</div>';
@@ -333,8 +338,9 @@ function collectSection(key){
   box.querySelectorAll('.entry').forEach(function(e){
     var ins=e.querySelectorAll('input');
     var eid=(ins[0]&&ins[0].value||'').trim();
-    var room=(ins[1]&&ins[1].value||'').trim();
-    if(eid) out[eid]=room;
+    var usage=(ins[1]&&ins[1].value||'').trim();
+    var room=(ins[2]&&ins[2].value||'').trim();
+    if(eid) out[eid]={'room':room,'usage':usage};
   });
   CONFIG[key]=out;
 }
