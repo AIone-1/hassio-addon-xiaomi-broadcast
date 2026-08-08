@@ -749,6 +749,8 @@ WEBUI_HTML = """<!DOCTYPE html>
   #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
   #status{font-size:12px;color:var(--dim)}
   .save-status{font-size:12px;color:var(--green);min-height:18px;margin-top:8px}
+  .week-tab{flex:1;text-align:center;padding:7px 0;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);color:var(--dim);cursor:pointer;font-size:13px;user-select:none}
+  .week-tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
   .page{display:none}
   .page.on{display:block}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:10px}
@@ -838,7 +840,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class="page" id="page-tpl">
   <div class="card">
     <div class="sec-title">🧩 模板播报配置</div>
-    <div class="sec-desc">配置模板模式（规则模板）的播报参数：阈值、板块开关、文案等。改完点"保存模板配置"。</div>
+    <div class="sec-desc">播报文案（问候语/结束语/小贴士）、阈值、板块开关等参数。改完点"保存模板配置"。</div>
     <div id="tplBox"></div>
     <button onclick="saveTpl()" style="margin-top:12px;width:100%">💾 保存模板配置</button>
     <div class="save-status" id="tplStatus"></div>
@@ -1174,14 +1176,16 @@ document.addEventListener('click',function(ev){
 
 /* ─── 模板播报配置 ─── */
 var TPL_GROUPS=[
-  {title:'问候语',open:true,dualMode:true,modeKey:'greeting_mode',weekKey:'greeting_days',fields:[
-    {k:'workday_desc',label:'工作日描述',def:'工作日辛苦了',type:'text'},
-    {k:'weekend_desc',label:'周末描述',def:'周末愉快',type:'text'},
+  {title:'播报文案',open:true,weekPanel:true,groups:[
+    {name:'问候语',modeKey:'greeting_mode',weekKey:'greeting_days',help:'留空的天播报时用默认问候。'},
+    {name:'结束语',modeKey:'ending_mode',weekKey:'ending_days',help:'留空的天播报时用默认结束语。'},
+    {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',help:'留空的天播报时用默认小贴士。'},
   ]},
-  {title:'结束语',open:true,dualMode:true,modeKey:'ending_mode',weekKey:'ending_days',fields:[
-    {k:'ending_text',label:'手动结束语（留空用默认）',def:'',type:'textarea'},
+  {title:'默认文案',open:false,fields:[
+    {k:'workday_desc',label:'工作日描述（问候留空时用）',def:'工作日辛苦了',type:'text'},
+    {k:'weekend_desc',label:'周末描述（问候留空时用）',def:'周末愉快',type:'text'},
+    {k:'ending_text',label:'默认结束语（留空用按时间段的默认）',def:'',type:'textarea'},
   ]},
-  {title:'小贴士',open:true,dualMode:true,modeKey:'tip_mode',weekKey:'tip_days',fields:[]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
     {k:'temp_constant_diff',label:'恒温温差阈值(度)',def:1,type:'number'},
@@ -1261,24 +1265,18 @@ function renderTplCfg(){
   var secs=ts.sections||{};
   var h='';
   TPL_GROUPS.forEach(function(g,gi){
-    var open = (g.open || ts['_fold'+gi] === true || (ts['_fold'+gi]===undefined && gi<2));
-    // 双模式开关（大模型生成 / 手动填写）
-    var mode = g.dualMode ? (ts[g.modeKey]||'manual') : null;
+    // 🔑 播报文案面板：问候语/结束语/小贴士 三个子 tab 共用一个模式切换 + 7 天网格
+    if(g.weekPanel){
+      h+=renderWeekPanel(ts);
+      return;
+    }
+    // 默认折叠（只有播报文案恒开）；用户展开过的保持展开
+    var open = (ts['_fold'+gi]===true) || (g.open===true && ts['_fold'+gi]!==false);
     h+='<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">';
     h+='<div onclick="toggleTplFold('+gi+')" style="padding:10px 12px;background:var(--bg-inset);cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
     h+='<span style="font-weight:600;font-size:13px">'+g.title+'</span><span>'+(open?'▾':'▸')+'</span></div>';
     if(open){
       h+='<div style="padding:12px">';
-      // 双模式切换
-      if(g.dualMode){
-        h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
-        h+='<button type="button" class="'+(mode==='llm'?'btn-go':'ghost')+'" style="flex:1;padding:7px" onclick="setTplMode('+gi+',\\'llm\\')">🤖 大模型生成</button>';
-        h+='<button type="button" class="'+(mode!=='llm'?'btn-go':'ghost')+'" style="flex:1;padding:7px" onclick="setTplMode('+gi+',\\'manual\\')">✍️ 手动填写</button>';
-        h+='</div>';
-        if(mode==='llm'){
-          h+='<div style="font-size:11px;color:var(--accent2);margin-bottom:8px">🤖 将用大模型生成未来7天'+g.title+'（结合节日/星期/天气），生成结果在下方，保存后生效</div>';
-        }
-      }
       g.fields.forEach(function(f){
         var val;
         if(f.k.indexOf('sec_')===0){ val=secs[f.k.slice(4)]!==false; }
@@ -1296,26 +1294,6 @@ function renderTplCfg(){
           h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'">';
         }
       });
-      // 🔑 一周 7 天文案（问候语/结束语/小贴士）：大模型模式=生成按钮+只读预览；手动模式=7 个输入框
-      if(g.weekKey){
-        if(mode==='llm'){
-          h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:8px" onclick="genWeek('+gi+')">🤖 生成未来7天'+g.title+'</button>';
-        }
-        var days=ts[g.weekKey]||{};
-        var labels=weekLabels();
-        for(var wi=0; wi<7; wi++){
-          var w=labels[wi];
-          var val=days[w.ds]||'';
-          h+='<div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">';
-          h+='<div style="flex:0 0 100px;font-size:11px;color:var(--dim)">'+w.lbl+'</div>';
-          if(mode==='llm'){
-            h+='<div style="flex:1;font-size:12px;color:var(--accent2);border:1px solid var(--border);border-radius:6px;padding:7px 8px;background:var(--bg-inset)">'+esc(val||'（留空=播报时用默认）')+'</div>';
-          }else{
-            h+='<input class="eng-input" type="text" data-week="'+g.weekKey+'" data-date="'+w.ds+'" value="'+esc(val)+'" placeholder="留空=播报时用默认" style="flex:1;min-width:0">';
-          }
-          h+='</div>';
-        }
-      }
       h+='</div>';
     }
     h+='</div>';
@@ -1325,42 +1303,102 @@ function renderTplCfg(){
     inp.addEventListener('input',markDirty);
   });
 }
+// 🔑 播报文案面板：问候语/结束语/小贴士 子 tab + 模式切换 + 未来 7 天网格
+function renderWeekPanel(ts){
+  var sub=TPL_GROUPS[0].groups;
+  var active=(typeof ts._activeWeek==='number')?ts._activeWeek:0;
+  if(active<0||active>=sub.length) active=0;
+  var g=sub[active];
+  var mode=ts[g.modeKey]||'manual';
+  var h='';
+  h+='<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">';
+  h+='<div style="padding:10px 12px;background:var(--bg-inset);display:flex;justify-content:space-between;align-items:center">';
+  h+='<span style="font-weight:600;font-size:13px">📝 播报文案</span><span style="font-size:11px;color:var(--dim)">问候语 · 结束语 · 小贴士</span></div>';
+  h+='<div style="padding:12px">';
+  // 子 tab（问候语/结束语/小贴士）
+  h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
+  sub.forEach(function(s,si){
+    h+='<div class="week-tab'+(si===active?' on':'')+'" onclick="weekTab('+si+')">'+s.name+'</div>';
+  });
+  h+='</div>';
+  // 模式切换（当前 tab 的 modeKey）
+  h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
+  h+='<button type="button" class="'+(mode==='manual'?'btn-go':'ghost')+'" style="flex:1;padding:6px" onclick="setTplMode('+active+',\\'manual\\')">✍️ 手动填写</button>';
+  h+='<button type="button" class="'+(mode==='llm'?'btn-go':'ghost')+'" style="flex:1;padding:6px" onclick="setTplMode('+active+',\\'llm\\')">🤖 大模型生成</button>';
+  h+='</div>';
+  if(mode==='llm'){
+    h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:8px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
+  }
+  // 未来 7 天网格（2 列，窄屏自动 1 列）
+  var days=ts[g.weekKey]||{};
+  var labels=weekLabels();
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px">';
+  for(var i=0;i<7;i++){
+    var w=labels[i];
+    var val=days[w.ds]||'';
+    h+='<div style="display:flex;gap:6px;align-items:center;min-width:0">';
+    h+='<div style="flex:0 0 82px;font-size:11px;color:var(--dim);white-space:nowrap">'+w.lbl+'</div>';
+    if(mode==='llm'){
+      h+='<div style="flex:1;font-size:12px;color:var(--accent2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--bg-inset);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(val)+'">'+esc(val||'（未生成）')+'</div>';
+    }else{
+      h+='<input class="eng-input" type="text" data-week="'+g.weekKey+'" data-date="'+w.ds+'" value="'+esc(val)+'" placeholder="留空=用默认" oninput="weekInput(this,\\''+g.weekKey+'\\',\\''+w.ds+'\\')" style="flex:1;min-width:0">';
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+  h+='<div style="font-size:11px;color:var(--dim);margin-top:8px">ℹ️ '+g.help+'</div>';
+  h+='</div></div>';
+  return h;
+}
 function toggleTplFold(gi){
   var ts=CONFIG.template_settings||{};
-  ts['_fold'+gi] = !(ts['_fold'+gi]|| (gi<2));
+  ts['_fold'+gi] = !(ts['_fold'+gi]||false);
   CONFIG.template_settings=ts;
   renderTplCfg();
 }
-function setTplMode(gi,mode){
-  var g=TPL_GROUPS[gi];
+// 🔑 切换播报文案的子 tab（问候语/结束语/小贴士）
+function weekTab(si){
+  var ts=CONFIG.template_settings||{};
+  ts._activeWeek=si;
+  CONFIG.template_settings=ts;
+  renderTplCfg();
+}
+// 模式切换（si = 播报文案子 tab 索引）
+function setTplMode(si,mode){
+  var g=TPL_GROUPS[0].groups[si];
   var ts=CONFIG.template_settings||{};
   ts[g.modeKey]=mode;
+  ts._activeWeek=si;   // 🔑 切到对应 tab，让生成按钮/预览显示在正确的位置
   CONFIG.template_settings=ts;
   markDirty();
   renderTplCfg();
-  // 🔑 双模式组切到"大模型生成"：立即生成未来7天文案（问候语/结束语/小贴士），显示在下方
-  if(mode==='llm' && g.weekKey){
-    genWeek(gi);
+  // 🔑 切到"大模型生成"：立即生成未来7天文案
+  if(mode==='llm'){
+    genWeek(si);
   }
 }
-// 未来 7 天（从今天起）的日期 + 中文标签
+// 未来 7 天（从今天起）的日期 + 中文标签（紧凑：今天·周六 / 明天·周日 / 周一）
 function weekLabels(){
   var wd=['周日','周一','周二','周三','周四','周五','周六'];
   var out=[];
   for(var i=0;i<7;i++){
     var d=new Date(); d.setDate(d.getDate()+i);
     var ds=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
-    var lbl=(i===0?'今天 ':(i===1?'明天 ':'') )+wd[d.getDay()]+' '+(d.getMonth()+1)+'月'+d.getDate()+'日';
+    var lbl;
+    if(i===0){ lbl='今天·'+wd[d.getDay()]; }
+    else if(i===1){ lbl='明天·'+wd[d.getDay()]; }
+    else { lbl=wd[d.getDay()]; }
+    lbl+=' '+(d.getMonth()+1)+'/'+d.getDate();
     out.push({ds:ds,lbl:lbl});
   }
   return out;
 }
 // 🤖 调后端生成未来7天文案并存到 template_settings（问候语/结束语/小贴士）
-function genWeek(gi){
-  var g=TPL_GROUPS[gi];
+function genWeek(si){
+  var g=TPL_GROUPS[0].groups[si];
   var secName=g.weekKey.replace('_days','');
   var statusEl=document.getElementById('tplStatus');
-  statusEl.textContent='🤖 正在生成未来7天'+g.title+'（约30秒）...';
+  statusEl.textContent='🤖 正在生成未来7天'+g.name+'（约30秒）...';
   fetch(BASE+'tpl/week',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:secName})})
     .then(function(r){return r.json()})
     .then(function(d){
@@ -1370,7 +1408,7 @@ function genWeek(gi){
         CONFIG.template_settings=ts;
         markDirty();
         renderTplCfg();
-        statusEl.textContent='✅ 已生成未来7天'+g.title;
+        statusEl.textContent='✅ 已生成未来7天'+g.name;
       }else{
         statusEl.textContent='❌ 生成失败：'+(d.error||'未知错误');
       }
@@ -1408,6 +1446,15 @@ function saveTpl(){
       if(d.ok) cfgDirty=false;
     })
     .catch(function(){document.getElementById('tplStatus').textContent='❌ 保存失败';});
+}
+// 🔑 一周 7 天文案手动输入：实时写 CONFIG（切 tab / 保存都拿到最新值；空=删该天用默认）
+function weekInput(el,wk,date){
+  var ts=CONFIG.template_settings||{};
+  if(!ts[wk]) ts[wk]={};
+  var v=(el.value||'').trim();
+  if(v) ts[wk][date]=v; else delete ts[wk][date];
+  CONFIG.template_settings=ts;
+  markDirty();
 }
 // 手动条目实体 id 输入：同步更新 CONFIG（去掉空实体 id）
 function manualEid(el,key){
