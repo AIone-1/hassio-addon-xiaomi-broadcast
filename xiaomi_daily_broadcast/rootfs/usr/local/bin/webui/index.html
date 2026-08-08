@@ -37,6 +37,11 @@
   .entry input{flex:1;min-width:120px}
   .entry .del{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px}
   .sec-title{font-size:13px;font-weight:600;color:var(--title);margin-bottom:4px}
+  .sec-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;margin-bottom:4px}
+  .sec-title-row .sec-title{margin-top:0;margin-bottom:0}
+  .ref-btn{background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--accent2);padding:2px 9px;font-size:12px;cursor:pointer;line-height:1.5;flex:0 0 auto;transition:opacity .2s}
+  .ref-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .ref-btn:active{opacity:.6}
   .sec-desc{font-size:11px;color:var(--dim);margin-bottom:10px}
   .add{background:transparent;border:1px dashed var(--border);color:var(--accent2);padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
   .search-row{margin:8px 0}
@@ -307,6 +312,18 @@ function startStatePoll(){
 function stopStatePoll(){
   if(stateTimer){ clearInterval(stateTimer); stateTimer=null; }
 }
+// 🔑 手动刷新某组的实时状态：立即拉最新实体状态，刷新所有徽章（按钮短暂反馈）
+function refreshSection(key){
+  var btn=document.getElementById('ref-'+key);
+  if(btn){ btn.textContent='⏳'; btn.style.opacity='.5'; }
+  fetch(BASE+'cfg/entities?_='+Date.now()).then(function(r){return r.json()}).then(function(d){
+    if(d && d.ok && d.entities) ENTITIES=d.entities;
+    updateStateBadges();
+    if(btn){ btn.textContent='🔄'; btn.style.opacity=''; }
+  }).catch(function(){
+    if(btn){ btn.textContent='❌'; btn.style.opacity=''; setTimeout(function(){ btn.textContent='🔄'; },1500); }
+  });
+}
 // 更新页面里所有状态徽章（.entry 里的 [data-state] 元素）
 function updateStateBadges(){
   document.querySelectorAll('#page-cfg .entry').forEach(function(e){
@@ -333,7 +350,11 @@ function renderSections(){
     var items=CONFIG[sec.key]||{};
     var entries=[];
     for(var k in items){ if(k!=='_note') entries.push([k,items[k]]); }
-    h+='<div class="sec-title" style="margin-top:12px">'+sec.title+'</div>';
+    // 🔑 每组标题右侧加刷新按钮：点一下立即拉最新实时状态
+    h+='<div class="sec-title-row">';
+    h+='<div class="sec-title">'+sec.title+'</div>';
+    h+='<button class="ref-btn" id="ref-'+sec.key+'" onclick="refreshSection(\''+sec.key+'\')" title="刷新实时状态">🔄</button>';
+    h+='</div>';
     h+='<div class="sec-desc">'+sec.desc+'</div>';
     h+='<div class="search-row"><input type="text" placeholder="🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）" onfocus="onSearch(\''+sec.key+'\')" oninput="onSearch(\''+sec.key+'\')" id="search-'+sec.key+'"></div>';
     h+='<div id="sec-'+sec.key+'">';
