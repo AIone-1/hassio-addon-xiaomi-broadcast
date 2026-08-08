@@ -915,7 +915,17 @@ def generate_with_llm(report, config):
 
 
 def build_ending(h):
-    """按时间段返回播报结束语。模板和 LLM 引擎共用，保证每次都有收尾。"""
+    """按时间段返回播报结束语。模板和 LLM 引擎共用，保证每次都有收尾。
+    双模式：ending_mode=manual 且 ending_text 非空 → 用手动结束语；否则用默认。"""
+    cfg = load_config()
+    try:
+        ts2 = cfg.get("template_settings") or {}
+        if ts2.get("ending_mode") == "manual":
+            manual_end = (ts2.get("ending_text") or "").strip()
+            if manual_end:
+                return manual_end
+    except Exception:
+        pass
     if h < 12:
         return "以上是今早的家中情况汇总，祝你今天一切顺利。播报结束。"
     elif h < 18:
@@ -1189,10 +1199,14 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # 构建播报内容
         # ═══════════════════════════════════════════
 
-        # 根据实际时间判断问候语（词可配置）
+        # 根据实际时间判断问候语（词可配置；greeting_mode=llm 用大模型生成的问候）
         h = now.hour
         _gw = ts(config, "greeting_words", {})
-        if h < 6:
+        _gmode = ts(config, "greeting_mode", "manual")
+        _gllm = ts(config, "greeting_generated", "")
+        if _gmode == "llm" and _gllm:
+            greeting = _gllm; period = "早上" if h < 12 else ("下午" if h < 18 else "晚上")
+        elif h < 6:
             greeting = _gw.get("night", "凌晨好"); period = "凌晨"
         elif h < 9:
             greeting = _gw.get("morning", "早上好"); period = "早上"

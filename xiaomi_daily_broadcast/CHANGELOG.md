@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.53 (2026-08-08)
+
+- 🧩 模板配置排版重做：折叠面板分组（告别乱堆）
+- 🤖 问候语/结束语支持双模式：大模型生成 或 手动填写（问候语选大模型立即生成，结束语手动填）
+- 🐛 修复"Can't find variable: box"根因（renderTplCfg 补 var box）
+
 ## 1.1.52 (2026-08-08)
 
 - 🐛 修复模板配置"加载失败：Can't find variable: box"——renderTplCfg 里 box 未声明（删 toggleTpl 时残留），补 var box

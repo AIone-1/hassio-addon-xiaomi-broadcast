@@ -183,6 +183,37 @@ def _fetch_all_states():
         return {}
 
 
+def generate_greeting():
+    """🤖 用大模型生成一句自然问候语（调 LLM）。失败返回默认问候。"""
+    import urllib.request as _ur
+    try:
+        cfg = ds.load_config()
+        llm = (cfg.get("engine", {}).get("llm") or {})
+        base = (llm.get("base_url") or "").rstrip("/")
+        key = llm.get("api_key") or ""
+        if not base:
+            return "你好呀，欢迎收听今天的小爱播报。"
+        url = base + "/v1/messages"
+        hdrs = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+        if key:
+            hdrs["x-api-key"] = key
+        body = json.dumps({
+            "model": llm.get("model", "deepseek-chat"),
+            "max_tokens": 200,
+            "system": "你是一个温暖亲切的小爱音箱播报助手。只输出一句简短自然的开场问候（10-25字），不要多余内容。",
+            "messages": [{"role": "user", "content": "请生成一句今天的开场问候。"}],
+        }).encode()
+        req = _ur.Request(url, data=body, headers=hdrs)
+        with _ur.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
+        if text:
+            return text[:40]
+    except Exception as e:
+        log(f"⚠️ 生成问候语失败: {e}")
+    return "你好呀，欢迎收听今天的小爱播报。"
+
+
 def ensure_button_entity():
     """确保所有播报按钮存在（每日/周/月/年）。已存在跳过，避免重复创建堆积。"""
     import websockets
@@ -504,6 +535,16 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self._body() or b"{}")
                 Path("/data/theme.json").write_text(json.dumps({"theme": data.get("theme", "dark")}))
                 self._send(200, json.dumps({"ok": True}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/tpl/greeting":
+            # 🤖 生成问候语：调 LLM 生成自然问候，存到 template_settings.greeting_generated
+            try:
+                greeting = generate_greeting()
+                cfg = json.loads(ds.CONFIG_PATH.read_text()) if ds.CONFIG_PATH.exists() else {}
+                cfg.setdefault("template_settings", {})["greeting_generated"] = greeting
+                save_edit_cfg({"template_settings": cfg["template_settings"]})
+                self._send(200, json.dumps({"ok": True, "greeting": greeting}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/logs/clear":
@@ -996,9 +1037,12 @@ document.addEventListener('click',function(ev){
 
 /* ─── 模板播报配置 ─── */
 var TPL_GROUPS=[
-  {title:'问候语',fields:[
+  {title:'问候语',open:true,dualMode:true,modeKey:'greeting_mode',fields:[
     {k:'workday_desc',label:'工作日描述',def:'工作日辛苦了',type:'text'},
     {k:'weekend_desc',label:'周末描述',def:'周末愉快',type:'text'},
+  ]},
+  {title:'结束语',dualMode:true,modeKey:'ending_mode',fields:[
+    {k:'ending_text',label:'手动结束语（留空用默认）',def:'',type:'textarea'},
   ]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
@@ -1078,28 +1122,77 @@ function renderTplCfg(){
   var ts=CONFIG.template_settings||{};
   var secs=ts.sections||{};
   var h='';
-  TPL_GROUPS.forEach(function(g){
-    h+='<div class=\"eng-title\">'+g.title+'</div>';
-    g.fields.forEach(function(f){
-      // 板块开关用 sec_ 前缀映射 sections
-      var val;
-      if(f.k.indexOf('sec_')===0){ val=secs[f.k.slice(4)]!==false; }
-      else{ val=(ts[f.k]!==undefined)?ts[f.k]:f.def; }
-      if(f.type==='check'){
-        h+='<label class=\"eng-check\"><input type=\"checkbox\" data-tpl=\"'+f.k+'\" '+(val?'checked':'')+'> '+f.label+'</label>';
-      }else if(f.type==='number'){
-        h+='<label class=\"eng-label\">'+f.label+'</label>';
-        h+='<input class=\"eng-input\" type=\"number\" data-tpl=\"'+f.k+'\" value=\"'+esc(val)+'\">';
-      }else{
-        h+='<label class=\"eng-label\">'+f.label+'</label>';
-        h+='<input class=\"eng-input\" type=\"text\" data-tpl=\"'+f.k+'\" value=\"'+esc(val)+'\">';
+  TPL_GROUPS.forEach(function(g,gi){
+    var open = (g.open || ts['_fold'+gi] === true || (ts['_fold'+gi]===undefined && gi<2));
+    // 双模式开关（大模型生成 / 手动填写）
+    var mode = g.dualMode ? (ts[g.modeKey]||'manual') : null;
+    h+='<div style=\"border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden\">';
+    h+='<div onclick=\"toggleTplFold('+gi+')\" style=\"padding:10px 12px;background:var(--bg-inset);cursor:pointer;display:flex;justify-content:space-between;align-items:center\">';
+    h+='<span style=\"font-weight:600;font-size:13px\">'+g.title+'</span><span>'+(open?'▾':'▸')+'</span></div>';
+    if(open){
+      h+='<div style=\"padding:12px\">';
+      // 双模式切换
+      if(g.dualMode){
+        h+='<div style=\"display:flex;gap:6px;margin-bottom:10px\">';
+        h+='<button type=\"button\" class=\"'+(mode==='llm'?'btn-go':'ghost')+'\" style=\"flex:1;padding:7px\" onclick=\"setTplMode('+gi+',\\'llm\\')\">🤖 大模型生成</button>';
+        h+='<button type=\"button\" class=\"'+(mode!=='llm'?'btn-go':'ghost')+'\" style=\"flex:1;padding:7px\" onclick=\"setTplMode('+gi+',\\'manual\\')\">✍️ 手动填写</button>';
+        h+='</div>';
+        if(mode==='llm'){
+          h+='<div style=\"font-size:11px;color:var(--accent2);margin-bottom:8px\">🤖 将用大模型自动生成'+g.title+'，保存后生效</div>';
+        }
       }
-    });
+      g.fields.forEach(function(f){
+        var val;
+        if(f.k.indexOf('sec_')===0){ val=secs[f.k.slice(4)]!==false; }
+        else{ val=(ts[f.k]!==undefined)?ts[f.k]:f.def; }
+        if(f.type==='check'){
+          h+='<label class=\"eng-check\"><input type=\"checkbox\" data-tpl=\"'+f.k+'\" '+(val?'checked':'')+'> '+f.label+'</label>';
+        }else if(f.type==='number'){
+          h+='<label class=\"eng-label\">'+f.label+'</label>';
+          h+='<input class=\"eng-input\" type=\"number\" data-tpl=\"'+f.k+'\" value=\"'+esc(val)+'\">';
+        }else if(f.type==='textarea'){
+          h+='<label class=\"eng-label\">'+f.label+'</label>';
+          h+='<textarea class=\"eng-input\" data-tpl=\"'+f.k+'\" style=\"min-height:50px\">'+esc(val)+'</textarea>';
+        }else{
+          h+='<label class=\"eng-label\">'+f.label+'</label>';
+          h+='<input class=\"eng-input\" type=\"text\" data-tpl=\"'+f.k+'\" value=\"'+esc(val)+'\">';
+        }
+      });
+      h+='</div>';
+    }
+    h+='</div>';
   });
   box.innerHTML=h;
-  box.querySelectorAll('input').forEach(function(inp){
+  box.querySelectorAll('input,textarea').forEach(function(inp){
     inp.addEventListener('input',markDirty);
   });
+}
+function toggleTplFold(gi){
+  var ts=CONFIG.template_settings||{};
+  ts['_fold'+gi] = !(ts['_fold'+gi]|| (gi<2));
+  CONFIG.template_settings=ts;
+  renderTplCfg();
+}
+function setTplMode(gi,mode){
+  var g=TPL_GROUPS[gi];
+  var ts=CONFIG.template_settings||{};
+  ts[g.modeKey]=mode;
+  CONFIG.template_settings=ts;
+  markDirty();
+  // 问候语选\"大模型生成\"时，立即生成并存
+  if(g.modeKey==='greeting_mode' && mode==='llm'){
+    document.getElementById('tplStatus').textContent='🤖 正在生成问候语...';
+    fetch(BASE+'tpl/greeting',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+      if(d.ok && d.greeting){
+        ts.greeting_generated=d.greeting;
+        CONFIG.template_settings=ts;
+        document.getElementById('tplStatus').textContent='✅ 已生成问候语：'+d.greeting;
+      }else{
+        document.getElementById('tplStatus').textContent='❌ 生成失败：'+(d.error||'');
+      }
+    }).catch(function(){document.getElementById('tplStatus').textContent='❌ 生成失败';});
+  }
+  renderTplCfg();
 }
 function saveTpl(){
   // 🔑 收集模板配置并保存
