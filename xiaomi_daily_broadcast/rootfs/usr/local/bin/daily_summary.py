@@ -1189,7 +1189,7 @@ def build_period_text(summary_type, ps, now, config):
 
     p = ps["power"]
     if p["days"]:
-        lines.append(f"{period_label}一共用电{p['total_kwh']:.1f}度，平均每天{p['avg_daily']:.1f}度。")
+        lines.append(f"{period_label}共耗电{p['total_kwh']:.1f}度，平均每天{p['avg_daily']:.1f}度。")
         top = sorted(p["by_device"].items(), key=lambda x: -x[1])[:3]
         if top:
             lines.append("耗电最多：" + "，".join(f"{n}{k:.1f}度" for n, k in top) + "。")
@@ -1344,7 +1344,17 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         if ts_on(config, "greeting"):
             _greet_cached = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
             if _greet_cached:
-                lines = [_greet_cached]
+                # 🐛 缓存问候语可能带固定时段（"周六早上好"），晚上播报仍说"早上好"——替换成当前时段
+                # ⚠️ 时段词可能在句中（"周六早上好"），必须 re.search 任意位置，不能只匹配句首（v1.1.32 教训）
+                if re.search(r'早上好|上午好|中午好|下午好|晚上好|凌晨好', _greet_cached):
+                    # 去掉第一个时段词，但保留后面的标点（"周六早上好，周末"→"周六，周末"，不吞逗号）
+                    _g2 = re.sub(r'(早上好|上午好|中午好|下午好|晚上好|凌晨好)', '', _greet_cached, count=1).strip()
+                    _g2 = re.sub(r'[！!]+', '，', _g2)  # "周六！周末"→"周六，周末"
+                    _g2 = re.sub(r'^[，,。\s]+', '', _g2).strip()
+                    lines = [f"{greeting}，{_g2}"] if _g2 else [greeting]
+                else:
+                    # 缓存没有时段词（新生成的不带"早上好"）→ 直接加当前时段
+                    lines = [f"{greeting}，{_greet_cached}"]
             else:
                 lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
 
@@ -1404,7 +1414,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         report["temp_alerts"] = temp_alerts
 
         if temp_parts:
-            temp_line = ts(config, "text_temp_prefix", "今日温度：") + "，".join(temp_parts)
+            temp_line = ts(config, "text_temp_prefix", "温度：") + "，".join(temp_parts)
             if temp_alerts:
                 temp_line += "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
             lines.append(temp_line + "。")
@@ -1425,9 +1435,9 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             report["humidity_dry"] = dry
             report["humidity_wet"] = wet
             if hums:
-                # 播报每个房间湿度值，如"今日湿度：客厅50%，卧室45%"
+                # 播报每个房间湿度值，如"湿度：客厅50%，卧室45%"
                 hum_parts = [f"{r}{h:.0f}%" for r, h in hums.items()]
-                hum_line = "今日湿度：" + "，".join(hum_parts)
+                hum_line = "湿度：" + "，".join(hum_parts)
                 if dry:
                     hum_line += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
                 if wet:
@@ -1462,12 +1472,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             ranked = sorted(device_energy.items(), key=lambda x: -x[1])
             top3 = [(n, k) for n, k in ranked[:top_n] if k > top_min]
             if total_kwh > show_th:
-                power_line = f"今日耗电量共{total_kwh:.1f}度"
+                power_line = f"耗电量：共{total_kwh:.1f}度"
                 if top3:
                     top_parts = [f"{n}耗电{k:.1f}度" for n, k in top3]
                     power_line += "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(top_parts)
             elif total_kwh > 0:
-                power_line = f"今日耗电量不到{min(0.1, save_th):.1f}度，非常省电"
+                power_line = f"耗电量：不到{min(0.1, save_th):.1f}度，非常省电"
             # 读不到的用电设备提示（总量可能偏小）
             if unread:
                 power_line += f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
@@ -1502,7 +1512,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if v is not None and v > high_alert:
                     high_devices.append((_power_label(eid, meta), v))
             if now_parts:
-                power_now_line = "当前实时功率：" + "，".join(now_parts)
+                power_now_line = "实时功率：" + "，".join(now_parts)
                 if high_devices:
                     hp = [f"{n} {p:.0f}瓦" for n, p in high_devices]
                     power_now_line += "，注意：" + "、".join(hp) + "功率较高，不用时可以关掉"
@@ -1573,11 +1583,11 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             bad = ts(config, "pm25_bad", 50)
             good = ts(config, "pm25_good", 10)
             if pm25 > sev:
-                lines.append(f"PM2.5为{pm25:.0f}，严重污染，建议关闭门窗开净化器。")
+                lines.append(f"空气质量：PM2.5为{pm25:.0f}，严重污染，建议关闭门窗开净化器。")
             elif pm25 > bad:
-                lines.append(f"PM2.5为{pm25:.0f}，空气质量差，建议开净化器。")
+                lines.append(f"空气质量：PM2.5为{pm25:.0f}，建议开净化器。")
             elif pm25 < good:
-                lines.append(f"PM2.5只有{pm25:.0f}，空气特别好，可以开窗通风。")
+                lines.append(f"空气质量：PM2.5只有{pm25:.0f}，空气特别好，可以开窗通风。")
 
         # ─────────────────────────────────────────
         # 5. 💡 灯光
@@ -1588,7 +1598,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         report["lights_on"] = lights_on
         if ts_on(config, "lights") and lights_cfg:
             if lights_on:
-                lines.append(f"{'、'.join(lights_on)}还亮着，不需要的话可以关掉。")
+                lines.append(f"灯光：{'、'.join(lights_on)}还亮着，不需要的话可以关掉。")
             else:
                 lines.append("所有主灯都已关闭，省电又环保。")
 
@@ -1601,11 +1611,11 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             t_high = ts(config, "task_high", 10)
             t_mid = ts(config, "task_mid", 5)
             if task_count >= t_high:
-                lines.append(f"今天完成了{task_count}个终端任务，效率很高。")
+                lines.append(f"任务：完成{task_count}个终端任务，效率很高。")
             elif task_count >= t_mid:
-                lines.append(f"今天完成了{task_count}个终端任务，进度不错。")
+                lines.append(f"任务：完成{task_count}个终端任务，进度不错。")
             else:
-                lines.append(f"今天完成了{task_count}个终端任务。")
+                lines.append(f"任务：完成{task_count}个终端任务。")
 
         # ─────────────────────────────────────────
         # 7. 📋 待办 + 备忘（合并为一条）
