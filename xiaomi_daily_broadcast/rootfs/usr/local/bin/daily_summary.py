@@ -298,6 +298,18 @@ def ts_on(config, section):
     return True
 
 
+def ts_fmt(config, key, default):
+    """读句式模板（template_settings.formats.<key>），空或缺用默认。
+    用户可配中间板块的播报措辞，用占位符 {items}/{total}/{count}/{pm}/{extra} 等拼句子。"""
+    try:
+        v = (config.get("template_settings") or {}).get("formats", {}).get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    except Exception:
+        pass
+    return default
+
+
 def _week_loop_match(ts_cfg, prefix, today_str):
     """7 天循环：循环开关 <prefix>_loop_enabled 开启时，按星期几匹配 <prefix>_days 里同星期几那条（跨周一直循环用）。
     开关没开 / 没匹配到 → None。"""
@@ -1414,10 +1426,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         report["temp_alerts"] = temp_alerts
 
         if temp_parts:
-            temp_line = ts(config, "text_temp_prefix", "温度：") + "，".join(temp_parts)
+            _temp_tpl = ts_fmt(config, "temp", "温度：{items}{extra}")
+            _temp_items = "，".join(temp_parts)
+            _temp_extra = ""
             if temp_alerts:
-                temp_line += "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
-            lines.append(temp_line + "。")
+                _temp_extra = "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
+            lines.append(_temp_tpl.replace("{items}", _temp_items).replace("{extra}", _temp_extra) + "。")
 
         # 2. 💧 湿度（单独一条）
         # ─────────────────────────────────────────
@@ -1436,12 +1450,14 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             report["humidity_wet"] = wet
             if hums:
                 # 播报每个房间湿度值，如"湿度：客厅50%，卧室45%"
-                hum_parts = [f"{r}{h:.0f}%" for r, h in hums.items()]
-                hum_line = "湿度：" + "，".join(hum_parts)
+                _hum_tpl = ts_fmt(config, "humidity", "湿度：{items}{extra}")
+                _hum_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
+                _hum_extra = ""
                 if dry:
-                    hum_line += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
+                    _hum_extra += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
                 if wet:
-                    hum_line += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+                    _hum_extra += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+                hum_line = _hum_tpl.replace("{items}", _hum_items).replace("{extra}", _hum_extra)
             elif dry or wet:
                 hum_line = "，" + "，".join((["、".join(dry) + "比较干燥"] if dry else []) + (["、".join(wet) + "湿度偏高"] if wet else []))
             if hum_line:
@@ -1472,15 +1488,16 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             ranked = sorted(device_energy.items(), key=lambda x: -x[1])
             top3 = [(n, k) for n, k in ranked[:top_n] if k > top_min]
             if total_kwh > show_th:
-                power_line = f"耗电量：共{total_kwh:.1f}度"
+                _pow_tpl = ts_fmt(config, "power", "耗电量：共{total}度{top}{unread}")
+                _pow_top = ""
                 if top3:
-                    top_parts = [f"{n}耗电{k:.1f}度" for n, k in top3]
-                    power_line += "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(top_parts)
+                    _pow_top = "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(f"{n}耗电{k:.1f}度" for n, k in top3)
+                _pow_unread = ""
+                if unread:
+                    _pow_unread = f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
+                power_line = _pow_tpl.replace("{total}", f"{total_kwh:.1f}").replace("{top}", _pow_top).replace("{unread}", _pow_unread)
             elif total_kwh > 0:
                 power_line = f"耗电量：不到{min(0.1, save_th):.1f}度，非常省电"
-            # 读不到的用电设备提示（总量可能偏小）
-            if unread:
-                power_line += f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
             report["power"] = {
                 "total_kwh": round(total_kwh, 2),
                 "top3": [[n, round(k, 2)] for n, k in top3] if top3 else [],
@@ -1512,10 +1529,11 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if v is not None and v > high_alert:
                     high_devices.append((_power_label(eid, meta), v))
             if now_parts:
-                power_now_line = "实时功率：" + "，".join(now_parts)
+                _now_tpl = ts_fmt(config, "power_now", "实时功率：{items}{extra}")
+                _now_extra = ""
                 if high_devices:
-                    hp = [f"{n} {p:.0f}瓦" for n, p in high_devices]
-                    power_now_line += "，注意：" + "、".join(hp) + "功率较高，不用时可以关掉"
+                    _now_extra = "，注意：" + "、".join(f"{n} {p:.0f}瓦" for n, p in high_devices) + "功率较高，不用时可以关掉"
+                power_now_line = _now_tpl.replace("{items}", "，".join(now_parts)).replace("{extra}", _now_extra)
             report["power_now"] = {"now": [[n, p] for n, p in high_devices] if high_devices else []}
         if power_now_line:
             lines.append(power_now_line + "。")
@@ -1571,7 +1589,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             "all_closed": not open_doors and not special_parts,
         }
         if safety_parts:
-            lines.append("安全巡检：" + "，".join(safety_parts) + "。")
+            _sec_tpl = ts_fmt(config, "security", "安全巡检：{items}")
+            lines.append(_sec_tpl.replace("{items}", "，".join(safety_parts)) + "。")
 
         # ─────────────────────────────────────────
         # 4. 🌬️ 空气质量
@@ -1583,11 +1602,16 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             bad = ts(config, "pm25_bad", 50)
             good = ts(config, "pm25_good", 10)
             if pm25 > sev:
-                lines.append(f"空气质量：PM2.5为{pm25:.0f}，严重污染，建议关闭门窗开净化器。")
+                _pm_desc = f"PM2.5为{pm25:.0f}，严重污染，建议关闭门窗开净化器"
             elif pm25 > bad:
-                lines.append(f"空气质量：PM2.5为{pm25:.0f}，建议开净化器。")
+                _pm_desc = f"PM2.5为{pm25:.0f}，建议开净化器"
             elif pm25 < good:
-                lines.append(f"空气质量：PM2.5只有{pm25:.0f}，空气特别好，可以开窗通风。")
+                _pm_desc = f"PM2.5只有{pm25:.0f}，空气特别好，可以开窗通风"
+            else:
+                _pm_desc = None
+            if _pm_desc:
+                _pm_tpl = ts_fmt(config, "pm25", "空气质量：{pm}")
+                lines.append(_pm_tpl.replace("{pm}", _pm_desc) + "。")
 
         # ─────────────────────────────────────────
         # 5. 💡 灯光
@@ -1598,7 +1622,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         report["lights_on"] = lights_on
         if ts_on(config, "lights") and lights_cfg:
             if lights_on:
-                lines.append(f"灯光：{'、'.join(lights_on)}还亮着，不需要的话可以关掉。")
+                _li_tpl = ts_fmt(config, "lights", "灯光：{items}还亮着，不需要的话可以关掉")
+                lines.append(_li_tpl.replace("{items}", "、".join(lights_on)) + "。")
             else:
                 lines.append("所有主灯都已关闭，省电又环保。")
 
@@ -1611,11 +1636,13 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             t_high = ts(config, "task_high", 10)
             t_mid = ts(config, "task_mid", 5)
             if task_count >= t_high:
-                lines.append(f"任务：完成{task_count}个终端任务，效率很高。")
+                _task_extra = "，效率很高"
             elif task_count >= t_mid:
-                lines.append(f"任务：完成{task_count}个终端任务，进度不错。")
+                _task_extra = "，进度不错"
             else:
-                lines.append(f"任务：完成{task_count}个终端任务。")
+                _task_extra = ""
+            _task_tpl = ts_fmt(config, "task", "任务：完成{count}个终端任务{extra}")
+            lines.append(_task_tpl.replace("{count}", str(task_count)).replace("{extra}", _task_extra) + "。")
 
         # ─────────────────────────────────────────
         # 7. 📋 待办 + 备忘（合并为一条）
@@ -1658,7 +1685,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             todo_lines.append(f"手机备忘{len(memos)}条：{'，'.join(memo_texts)}")
 
         if todo_lines:
-            lines.append("待办与备忘：" + "，".join(todo_lines) + "。")
+            _todo_tpl = ts_fmt(config, "todo", "待办与备忘：{items}")
+            lines.append(_todo_tpl.replace("{items}", "，".join(todo_lines)) + "。")
 
         # ─────────────────────────────────────────
         # 8. ⚙️ 设备故障
@@ -1683,7 +1711,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                             pass
                     faults.append(label)
             if faults:
-                lines.append(f"有{len(faults)}台设备离线：{'、'.join(faults)}，有空检查一下。")
+                _fault_tpl = ts_fmt(config, "fault", "有{count}台设备离线：{items}，有空检查一下")
+                lines.append(_fault_tpl.replace("{count}", str(len(faults))).replace("{items}", "、".join(faults)) + "。")
             report["faults"] = faults
 
         # ─────────────────────────────────────────

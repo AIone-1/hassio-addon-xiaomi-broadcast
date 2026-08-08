@@ -1380,6 +1380,18 @@ var TPL_GROUPS=[
   {title:'设备故障',fields:[
     {k:'fault_offline_days',label:'离线提醒时间窗(天)',def:3,type:'number'},
   ]},
+  {title:'句式',open:false,fields:[
+    {k:'fmt_temp',label:'温度（{items}=房间温度 {extra}=高温提醒）',def:'温度：{items}{extra}',type:'text'},
+    {k:'fmt_humidity',label:'湿度（{items}=房间湿度 {extra}=干燥过湿）',def:'湿度：{items}{extra}',type:'text'},
+    {k:'fmt_power',label:'耗电量（{total}=总量 {top}=前三 {unread}=读不到）',def:'耗电量：共{total}度{top}{unread}',type:'text'},
+    {k:'fmt_power_now',label:'实时功率（{items}=设备功率 {extra}=高功耗）',def:'实时功率：{items}{extra}',type:'text'},
+    {k:'fmt_security',label:'安全巡检（{items}=巡检内容）',def:'安全巡检：{items}',type:'text'},
+    {k:'fmt_pm25',label:'空气质量（{pm}=PM描述）',def:'空气质量：{pm}',type:'text'},
+    {k:'fmt_lights',label:'灯光（{items}=亮灯）',def:'灯光：{items}还亮着，不需要的话可以关掉',type:'text'},
+    {k:'fmt_task',label:'任务（{count}=任务数 {extra}=档位）',def:'任务：完成{count}个终端任务{extra}',type:'text'},
+    {k:'fmt_todo',label:'待办（{items}=待办列表）',def:'待办与备忘：{items}',type:'text'},
+    {k:'fmt_fault',label:'设备故障（{count}=台数 {items}=设备）',def:'有{count}台设备离线：{items}，有空检查一下',type:'text'},
+  ]},
   {title:'板块开关',fields:[
     {k:'sec_greeting',label:'问候语',def:true,type:'check'},
     {k:'sec_ending',label:'结束语',def:true,type:'check'},
@@ -1440,6 +1452,7 @@ function renderTplCfg(){
       g.fields.forEach(function(f){
         var val;
         if(f.k.indexOf('sec_')===0){ var _sv=secs[f.k.slice(4)]; val=(_sv!==undefined)?_sv:f.def; }
+        else if(f.k.indexOf('fmt_')===0){ var _fm=ts.formats||{}; val=(_fm[f.k.slice(4)]!==undefined)?_fm[f.k.slice(4)]:f.def; }
         else{ val=(ts[f.k]!==undefined)?ts[f.k]:f.def; }
         if(f.type==='check'){
           h+='<label class="eng-check"><input type="checkbox" data-tpl="'+f.k+'" '+(val?'checked':'')+'> '+f.label+'</label>';
@@ -1613,6 +1626,7 @@ function saveTpl(){
       var k=el.getAttribute('data-tpl');
       if(el.type==='checkbox'){ if(k.indexOf('sec_')===0) secs[k.slice(4)]=el.checked; else ts[k]=el.checked; }
       else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
+      else if(k.indexOf('fmt_')===0){ if(!ts.formats) ts.formats={}; ts.formats[k.slice(4)]=el.value; }
       else{ ts[k]=el.value; }
     });
     // 🔑 一周 7 天文案（问候语/结束语/小贴士）：收集手动填写，空=删该天（播报时用默认）
