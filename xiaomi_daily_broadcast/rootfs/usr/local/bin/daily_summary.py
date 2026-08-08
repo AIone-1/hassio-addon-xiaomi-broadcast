@@ -145,7 +145,8 @@ def load_config():
             for _eid, _val in list(_s.items()):
                 if isinstance(_val, dict):
                     _s[_eid] = _val.get("room", "")
-    # power_sensors 保留 power_type（daily/accumulate/integral），默认 daily
+    # power_sensors 保留 power_type + usage（daily/accumulate/integral，默认 daily）
+    # 🐛 usage 必须保留——calc_device_energy 用 room+usage 当 label，同房间多实体（卧室电源1/2）才不会互相覆盖
     _ps = cfg.get("power_sensors")
     if isinstance(_ps, dict):
         for _eid, _val in list(_ps.items()):
@@ -153,7 +154,11 @@ def load_config():
                 _pt = _val.get("power_type", "daily")
                 if _pt not in ("daily", "accumulate", "integral"):
                     _pt = "daily"
-                _ps[_eid] = {"room": _val.get("room", ""), "power_type": _pt}
+                _ps[_eid] = {
+                    "room": _val.get("room", ""),
+                    "usage": _val.get("usage", ""),
+                    "power_type": _pt,
+                }
     return cfg
 
 
@@ -236,12 +241,11 @@ def fetch_daily_power(power_config, token, date):
         if eid.startswith("_"):
             continue
         if isinstance(meta, dict):
-            label = meta.get("room", "")
             ptype = meta.get("power_type", "daily")
         else:
-            label = meta
             ptype = "daily"
-        disp = label if label else eid
+        # 🐛 用 room+usage 组合 label，同房间多实体不覆盖
+        disp = _power_label(eid, meta)
         entries = [v for _, v in hist.get(eid, [])]
         if not entries:
             continue
@@ -414,6 +418,21 @@ def save_power_integral(date_str, kwh):
         pass
 
 
+def _power_label(eid, meta):
+    """用电实体的播报名。🐛 关键：必须 room+usage 组合（如"卧室电源1"），
+    不能只用 room——同房间多个用电实体（卧室电源1/电源2、客厅冰箱/机柜）才会互相覆盖导致漏算。
+    旧配置无 usage 时退回 room 或 eid。"""
+    if isinstance(meta, dict):
+        room = (meta.get("room") or "").strip()
+        usage = (meta.get("usage") or "").strip()
+        if room and usage:
+            return f"{room}{usage}"
+        if room:
+            return room
+        return eid
+    return (meta or eid).strip()
+
+
 def calc_device_energy(states, power_config):
     """用电三方案计算今日用电量 kWh：
     - daily（默认）：直接读 power_cost_today 实体
@@ -433,12 +452,10 @@ def calc_device_energy(states, power_config):
             continue
         # 旧格式字符串=daily；新格式 dict 带 power_type
         if isinstance(meta, dict):
-            label = meta.get("room", "")
             ptype = meta.get("power_type", "daily")
         else:
-            label = meta
             ptype = "daily"
-        disp = label if label else eid
+        disp = _power_label(eid, meta)
 
         if ptype == "daily":
             v = get_float(states, eid)
@@ -1425,7 +1442,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         for _eid, _meta in (config.get("power_sensors") or {}).items():
             if _eid.startswith("_"):
                 continue
-            _label = _meta.get("room", "") if isinstance(_meta, dict) else _meta
+            _label = _power_label(_eid, _meta)
             if _label and _label not in device_energy:
                 unread.append(_label)
 
