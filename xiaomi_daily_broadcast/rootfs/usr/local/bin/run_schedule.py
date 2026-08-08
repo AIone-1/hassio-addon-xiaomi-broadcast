@@ -118,13 +118,14 @@ EDITABLE_SECTIONS = [
 
 
 def load_edit_cfg():
-    """读配置供配置页展示。🔑 读原始 JSON（不规范化）——否则 usage/power_type 被 load_config 降成 room 字符串丢失"""
+    """读配置供配置页展示。🔑 读原始 JSON（不规范化）——否则 usage/power_type 被 load_config 降成 room 字符串丢失。
+    JSON 损坏/缺文件时返回空配置（不崩，让前端至少能打开）。"""
     try:
         if ds.CONFIG_PATH.exists():
             return json.loads(ds.CONFIG_PATH.read_text())
-    except Exception:
-        pass
-    return ds.load_config()
+    except Exception as e:
+        log(f"⚠️ 读取配置失败（返回空配置）: {e}")
+    return {}
 
 
 def save_edit_cfg(updates):
@@ -1057,14 +1058,17 @@ function loadTplPage(){
   var timer=setTimeout(function(){
     document.getElementById('tplStatus').textContent='⚠️ 加载超时';
   },10000);
-  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){
+    if(!r.ok){ throw new Error('HTTP '+r.status); }
+    return r.json();
+  }).then(function(d){
     clearTimeout(timer);
     CONFIG=d||{};
     renderTplCfg();
     document.getElementById('tplStatus').textContent='';
-  }).catch(function(){
+  }).catch(function(err){
     clearTimeout(timer);
-    document.getElementById('tplStatus').textContent='⚠️ 加载失败';
+    document.getElementById('tplStatus').textContent='⚠️ 加载失败: '+(err&&err.message||'');
     renderTplCfg();
   });
 }

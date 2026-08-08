@@ -533,14 +533,17 @@ function loadTplPage(){
   var timer=setTimeout(function(){
     document.getElementById('tplStatus').textContent='⚠️ 加载超时';
   },10000);
-  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){
+    if(!r.ok){ throw new Error('HTTP '+r.status); }
+    return r.json();
+  }).then(function(d){
     clearTimeout(timer);
     CONFIG=d||{};
     renderTplCfg();
     document.getElementById('tplStatus').textContent='';
-  }).catch(function(){
+  }).catch(function(err){
     clearTimeout(timer);
-    document.getElementById('tplStatus').textContent='⚠️ 加载失败';
+    document.getElementById('tplStatus').textContent='⚠️ 加载失败: '+(err&&err.message||'');
     renderTplCfg();
   });
 }
