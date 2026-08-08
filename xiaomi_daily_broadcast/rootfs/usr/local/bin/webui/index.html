@@ -259,7 +259,8 @@ function renderSections(){
       var v=pair[1];
       var room=(typeof v==='string')?v:(v&&v.room||'');
       var usage=(typeof v==='object'&&v)?(v.usage||''):'';
-      h+=entryHTML(sec, pair[0], room, usage);
+      var ptype=(typeof v==='object'&&v)?(v.power_type||'daily'):'daily';
+      h+=entryHTML(sec, pair[0], room, usage, ptype);
     });
     h+='</div>';
     h+='<div id="cand-'+sec.key+'"></div>';
@@ -313,7 +314,7 @@ function pickCandidate(key, eid){
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, usage, editable){
+function entryHTML(sec, eid, room, usage, ptype, editable){
   var ph=sec.room?'房间名':'标签';
   // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   var eidAttr = editable
@@ -322,10 +323,21 @@ function entryHTML(sec, eid, room, usage, editable){
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
     : 'flex:1.4;min-width:180px;background:transparent;border:1px solid var(--border);color:var(--text)';
+  // 用电方式下拉（仅 power_sensors 段显示）
+  var typeSel='';
+  if(sec.key==='power_sensors'){
+    var opts=[['daily','日电量'],['accumulate','累计差值'],['integral','功率积分']];
+    var ohtml='';
+    opts.forEach(function(o){
+      ohtml+='<option value="'+o[0]+'"'+(ptype===o[0]?' selected':'')+'>'+o[1]+'</option>';
+    });
+    typeSel='<select style="flex:0 0 auto;padding:6px" onchange="onRoom(this,\''+sec.key+'\')">'+ohtml+'</select>';
+  }
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +'<input type="text" value="'+esc(usage||'')+'" placeholder="用途" oninput="onRoom(this,\''+sec.key+'\')">'
     +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="onRoom(this,\''+sec.key+'\')">'
+    +typeSel
     +'<button class="del" onclick="delEntry(\''+sec.key+'\',this)">✕</button>'
     +'</div>';
 }
@@ -340,7 +352,14 @@ function collectSection(key){
     var eid=(ins[0]&&ins[0].value||'').trim();
     var usage=(ins[1]&&ins[1].value||'').trim();
     var room=(ins[2]&&ins[2].value||'').trim();
-    if(eid) out[eid]={'room':room,'usage':usage};
+    var ptype='daily';
+    var sel=e.querySelector('select');
+    if(sel && key==='power_sensors') ptype=sel.value||'daily';
+    if(eid){
+      var obj={'room':room,'usage':usage};
+      if(key==='power_sensors') obj.power_type=ptype;
+      out[eid]=obj;
+    }
   });
   CONFIG[key]=out;
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.39 (2026-08-08)
+
+- ⚡ 用电计算三方案（配置页每个用电传感器可选）：
+  - 日电量：读 power_cost_today（默认）
+  - 累计差值：读 power_consumption，每天0点记基准，当前累计-基准=今日用电（误差≈0）
+  - 功率积分：读 electric_power，常驻线程每5分钟累加
+- 周期总结对累计差值设备用历史首尾差值
+
 ## 1.1.38 (2026-08-08)
 
 - ⏹ 修停止仍无效：media_stop 因 Pro8 实体缺 feature 被拒 → 改用 intelligent_speaker 发"停止播放"文字指令（实测能停 TTS）+ media_play_pause 组合

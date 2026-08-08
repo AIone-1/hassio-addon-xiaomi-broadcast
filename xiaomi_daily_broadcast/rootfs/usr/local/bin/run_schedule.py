@@ -159,6 +159,24 @@ def _ws_connect():
     return ws_url, token
 
 
+def _fetch_all_states():
+    """拉取 HA 全部实体状态 dict {entity_id: state}。失败返回 {}。"""
+    import websockets
+    try:
+        ws_url, token = _ws_connect()
+        async def _get():
+            async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                await ws.recv()
+                await ws.send(json.dumps({"type": "get_states", "id": 1}))
+                r = json.loads(await ws.recv())
+                return {s["entity_id"]: s for s in r.get("result", [])}
+        return asyncio.run(_get())
+    except Exception:
+        return {}
+
+
 def stop_speaker(notify_entity):
     """⏹ 停止音箱播放：
     1. intelligent_speaker 发"停止播放"文字指令（实测能停小米云 TTS）
@@ -332,12 +350,63 @@ def run_broadcast(summary_type="daily", text_only=False):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def power_integral_loop():
+    """🔌 常驻功率积分：每 5 分钟读配置 power_type=integral 的功率实体，
+    累加 W × 间隔(kWh) 到当天 /data/power_integral.json。"""
+    log("🔌 功率积分线程已启动")
+    INTERVAL = 300  # 5 分钟
+    while True:
+        try:
+            time.sleep(INTERVAL)
+            cfg = ds.load_config()
+            ps = cfg.get("power_sensors") or {}
+            integ_entities = {}
+            for eid, meta in ps.items():
+                if eid.startswith("_"):
+                    continue
+                if isinstance(meta, dict) and meta.get("power_type") == "integral":
+                    integ_entities[eid] = meta.get("room", eid)
+            if not integ_entities:
+                continue
+            states = _fetch_all_states()
+            if not states:
+                continue
+            today = datetime.now().strftime("%Y-%m-%d")
+            integ = ds.load_power_integral()
+            if integ.get("date") != today:
+                integ = {"date": today, "kwh": {}}
+            # W × 300s → kWh：W*秒/3.6e6
+            factor = INTERVAL / 3.6e6
+            for eid in integ_entities:
+                v = ds.get_float(states, eid)
+                if v is not None and v > 0:
+                    integ["kwh"][eid] = integ["kwh"].get(eid, 0.0) + v * factor
+            ds.save_power_integral(today, integ["kwh"])
+        except Exception as e:
+            log(f"⚠️ 功率积分错误: {e}")
+
+
 def scheduler_loop():
-    """60s 轮询：decide_summary_type 判断到点才播。"""
+    """60s 轮询：decide_summary_type 判断到点才播；每天 0 点记累计差值基准。"""
     last = {}
+    last_base_date = ""
     log("⏰ 调度循环已启动")
     while True:
         try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            # 🔑 每天 0 点（或跨天后首次）记录 accumulate 设备的累计基准
+            if today != last_base_date:
+                try:
+                    bl = ds.load_power_baseline()
+                    if bl.get("date") != today:
+                        states = _fetch_all_states()
+                        if states:
+                            ds.record_power_baseline(states, ds.load_config().get("power_sensors") or {})
+                            log(f"📊 已记录今日累计电量基准 ({today})")
+                except Exception as e:
+                    log(f"⚠️ 记录电量基准失败: {e}")
+                last_base_date = today
+
             cfg = ds.load_config()
             st = ds.decide_summary_type(datetime.now(), cfg)
             if st is not None:
@@ -772,7 +841,8 @@ function renderSections(){
       var v=pair[1];
       var room=(typeof v==='string')?v:(v&&v.room||'');
       var usage=(typeof v==='object'&&v)?(v.usage||''):'';
-      h+=entryHTML(sec, pair[0], room, usage);
+      var ptype=(typeof v==='object'&&v)?(v.power_type||'daily'):'daily';
+      h+=entryHTML(sec, pair[0], room, usage, ptype);
     });
     h+='</div>';
     h+='<div id=\"cand-'+sec.key+'\"></div>';
@@ -826,7 +896,7 @@ function pickCandidate(key, eid){
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, usage, editable){
+function entryHTML(sec, eid, room, usage, ptype, editable){
   var ph=sec.room?'房间名':'标签';
   // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   var eidAttr = editable
@@ -835,10 +905,21 @@ function entryHTML(sec, eid, room, usage, editable){
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
     : 'flex:1.4;min-width:180px;background:transparent;border:1px solid var(--border);color:var(--text)';
+  // 用电方式下拉（仅 power_sensors 段显示）
+  var typeSel='';
+  if(sec.key==='power_sensors'){
+    var opts=[['daily','日电量'],['accumulate','累计差值'],['integral','功率积分']];
+    var ohtml='';
+    opts.forEach(function(o){
+      ohtml+='<option value=\"'+o[0]+'\"'+(ptype===o[0]?' selected':'')+'>'+o[1]+'</option>';
+    });
+    typeSel='<select style=\"flex:0 0 auto;padding:6px\" onchange=\"onRoom(this,\\''+sec.key+'\\')\">'+ohtml+'</select>';
+  }
   return '<div class=\"entry\" data-raw=\"'+esc(eid)+'\">'
     +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
     +'<input type=\"text\" value=\"'+esc(usage||'')+'\" placeholder=\"用途\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
     +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
+    +typeSel
     +'<button class=\"del\" onclick=\"delEntry(\\''+sec.key+'\\',this)\">✕</button>'
     +'</div>';
 }
@@ -853,7 +934,14 @@ function collectSection(key){
     var eid=(ins[0]&&ins[0].value||'').trim();
     var usage=(ins[1]&&ins[1].value||'').trim();
     var room=(ins[2]&&ins[2].value||'').trim();
-    if(eid) out[eid]={'room':room,'usage':usage};
+    var ptype='daily';
+    var sel=e.querySelector('select');
+    if(sel && key==='power_sensors') ptype=sel.value||'daily';
+    if(eid){
+      var obj={'room':room,'usage':usage};
+      if(key==='power_sensors') obj.power_type=ptype;
+      out[eid]=obj;
+    }
   });
   CONFIG[key]=out;
 }
@@ -1195,6 +1283,8 @@ def main():
         threading.Thread(target=button_watcher, daemon=True).start()
     except Exception as e:
         log(f"⚠️ 播报按钮初始化失败: {e}")
+    # 功率积分线程（配置了 power_type=integral 的插座）
+    threading.Thread(target=power_integral_loop, daemon=True).start()
     # Web 服务主线程
     log(f"🌐 Web UI 已启动 (port {port})")
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)

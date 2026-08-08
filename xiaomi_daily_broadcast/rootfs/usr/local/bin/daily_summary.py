@@ -136,13 +136,24 @@ def load_config():
     except Exception:
         pass
 
-    # 🔑 传感器配置值兼容：新格式 {eid: {room, usage}} 转成 {eid: room}（usage 暂不参与播报，只存展示）
-    for _seg in ("temp_sensors", "humidity_sensors", "power_sensors", "power_now", "lights", "doors", "important_devices"):
+    # 🔑 传感器配置值兼容：新格式 {eid: {room, usage, power_type}} 规范化
+    # 普通段 → {eid: room}（usage 只存展示）；power_sensors → {eid: {room, power_type}}（用电三方案需要 power_type）
+    _norm_segs = ("temp_sensors", "humidity_sensors", "power_now", "lights", "doors", "important_devices")
+    for _seg in _norm_segs:
         _s = cfg.get(_seg)
         if isinstance(_s, dict):
             for _eid, _val in list(_s.items()):
                 if isinstance(_val, dict):
                     _s[_eid] = _val.get("room", "")
+    # power_sensors 保留 power_type（daily/accumulate/integral），默认 daily
+    _ps = cfg.get("power_sensors")
+    if isinstance(_ps, dict):
+        for _eid, _val in list(_ps.items()):
+            if isinstance(_val, dict):
+                _pt = _val.get("power_type", "daily")
+                if _pt not in ("daily", "accumulate", "integral"):
+                    _pt = "daily"
+                _ps[_eid] = {"room": _val.get("room", ""), "power_type": _pt}
     return cfg
 
 
@@ -215,18 +226,30 @@ def fetch_history_range(entity_ids, token, start_date, end_date):
 
 def fetch_daily_power(power_config, token, date):
     """查某日各设备用电（kWh）。返回 {label: kwh}。
-    ⚠️ 用电 = 当天窗口内最后一个数值型状态，不是 max()！
-    power_cost_today 本地午夜归零，窗口开头会有一格上一日的残留值
-    （实测 8/4 残留 0.64 而当天实际 0.62），max 会高估。"""
+    - daily：取窗口最后一个值（power_cost_today 午夜归零，用最后值）
+    - accumulate：取窗口首尾差值（power_consumption 累计，差值=当天增量）
+    """
     eids = [e for e in power_config if not e.startswith("_")]
     hist = fetch_history_range(eids, token, date, date + timedelta(days=1))
     out = {}
-    for eid, label in power_config.items():
+    for eid, meta in power_config.items():
         if eid.startswith("_"):
             continue
+        if isinstance(meta, dict):
+            label = meta.get("room", "")
+            ptype = meta.get("power_type", "daily")
+        else:
+            label = meta
+            ptype = "daily"
+        disp = label if label else eid
         entries = [v for _, v in hist.get(eid, [])]
-        if entries:
-            out[label] = max(0.0, entries[-1])
+        if not entries:
+            continue
+        if ptype == "accumulate":
+            # 累计差值：窗口最后一个值 - 窗口第一个值
+            out[disp] = max(0.0, entries[-1] - entries[0])
+        else:
+            out[disp] = max(0.0, entries[-1])
     return out
 
 
@@ -242,17 +265,106 @@ def fetch_daily_temperature(temp_sensors, token, day):
     return out
 
 
-def calc_device_energy(states, power_config):
-    """直接读 power_cost_today 实体（设备统计的今日累计电量 kWh）。
-    不推断，不积分——设备自己数的最准。"""
-    device_energy = {}
-    for eid, label in power_config.items():
+POWER_BASELINE = Path("/data/power_baseline.json")
+POWER_INTEGRAL = Path("/data/power_integral.json")
+
+
+def load_power_baseline():
+    """读每日累计差值基准：{"date": "2026-08-08", "baselines": {entity_id: value}}"""
+    try:
+        if POWER_BASELINE.exists():
+            return json.loads(POWER_BASELINE.read_text())
+    except Exception:
+        pass
+    return {"date": "", "baselines": {}}
+
+
+def save_power_baseline(date_str, baselines):
+    try:
+        POWER_BASELINE.write_text(json.dumps({"date": date_str, "baselines": baselines}, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def record_power_baseline(states, power_config):
+    """把配置里 accumulate 设备的当前累计值记为今日基准（每天0点/缺失时调）。"""
+    bl = load_power_baseline()
+    today = datetime.now().strftime("%Y-%m-%d")
+    bl["date"] = today
+    bl.setdefault("baselines", {})
+    for eid, meta in power_config.items():
         if eid.startswith("_"):
             continue
-        v = get_float(states, eid)
-        if v is not None and v >= 0:
-            # label 空则用 entity_id 兜底，避免排名显示"耗电x度"没设备名
-            device_energy[label if label else eid] = v
+        if isinstance(meta, dict) and meta.get("power_type") == "accumulate":
+            v = get_float(states, eid)
+            if v is not None and v >= 0:
+                bl["baselines"][eid] = v
+    save_power_baseline(today, bl["baselines"])
+    return bl
+
+
+def load_power_integral():
+    """读功率积分：{"date": "2026-08-08", "kwh": {entity_id: value}}"""
+    try:
+        if POWER_INTEGRAL.exists():
+            return json.loads(POWER_INTEGRAL.read_text())
+    except Exception:
+        pass
+    return {"date": "", "kwh": {}}
+
+
+def save_power_integral(date_str, kwh):
+    try:
+        POWER_INTEGRAL.write_text(json.dumps({"date": date_str, "kwh": kwh}, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def calc_device_energy(states, power_config):
+    """用电三方案计算今日用电量 kWh：
+    - daily（默认）：直接读 power_cost_today 实体
+    - accumulate：读 power_consumption 累计实体，当前值 - 当日零点基准
+    - integral：读功率积分文件（常驻线程累加 electric_power）
+    """
+    device_energy = {}
+    bl = load_power_baseline()
+    bl_date = bl.get("date", "")
+    today = datetime.now().strftime("%Y-%m-%d")
+    bl_map = bl.get("baselines", {}) if bl_date == today else {}
+    integ = load_power_integral()
+    integ_map = integ.get("kwh", {}) if integ.get("date") == today else {}
+
+    for eid, meta in power_config.items():
+        if eid.startswith("_"):
+            continue
+        # 旧格式字符串=daily；新格式 dict 带 power_type
+        if isinstance(meta, dict):
+            label = meta.get("room", "")
+            ptype = meta.get("power_type", "daily")
+        else:
+            label = meta
+            ptype = "daily"
+        disp = label if label else eid
+
+        if ptype == "daily":
+            v = get_float(states, eid)
+            if v is not None and v >= 0:
+                device_energy[disp] = v
+        elif ptype == "accumulate":
+            cur = get_float(states, eid)
+            base = bl_map.get(eid)
+            if cur is None or cur < 0:
+                continue
+            if base is None:
+                # 基准缺失/过期：先记当前为基准，今天从0开始算
+                record_power_baseline(states, power_config)
+                device_energy[disp] = 0.0
+            else:
+                device_energy[disp] = max(0.0, cur - base)
+        elif ptype == "integral":
+            v = integ_map.get(eid, 0.0)
+            if v and v > 0:
+                device_energy[disp] = v
     return device_energy
 
 
