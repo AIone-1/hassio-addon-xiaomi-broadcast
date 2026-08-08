@@ -28,6 +28,7 @@
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
+  #cfg-speaker{width:98%;box-sizing:border-box;max-width:none;padding:8px 10px;border-radius:6px}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
   #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
   #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
@@ -117,7 +118,7 @@
     <div class="sec-title">🎙️ 播报音箱</div>
     <div class="sec-desc">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
     <div class="row">
-      <select id="cfg-speaker" style="width:98%;box-sizing:border-box;padding:8px 10px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)"></select>
+      <select id="cfg-speaker"></select>
     </div>
   </div>
   <div class="card">
