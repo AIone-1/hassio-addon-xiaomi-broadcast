@@ -292,8 +292,8 @@ def ts_on(config, section):
 
 
 def week_day_text(config, prefix, today_str):
-    """读模板配置的 7 天文案缓存（template_settings.<prefix>_days）取当天内容。
-    prefix: greeting / ending / tip。无当天内容返回 None，上层回退默认逻辑。"""
+    """读模板配置的文案取当天内容。优先级：当天缓存 <prefix>_days[date] > 循环文案 <prefix>_loop（每天都用）。
+    prefix: greeting / ending / tip。都没有返回 None，上层回退默认逻辑。"""
     try:
         ts_cfg = config.get("template_settings") or {}
         days = ts_cfg.get(prefix + "_days") or {}
@@ -301,6 +301,9 @@ def week_day_text(config, prefix, today_str):
             v = days.get(today_str)
             if isinstance(v, str) and v.strip():
                 return v.strip()
+        loop = ts_cfg.get(prefix + "_loop")
+        if isinstance(loop, str) and loop.strip():
+            return loop.strip()
     except Exception:
         pass
     return None
@@ -931,10 +934,13 @@ def generate_with_llm(report, config):
 
 def build_ending(h):
     """按时间段返回播报结束语。模板和 LLM 引擎共用，保证每次都有收尾。
-    双模式：ending_mode=manual 且 ending_text 非空 → 用手动结束语；否则用默认。"""
+    优先级：循环结束语(ending_loop，每天用) > 手动结束语(ending_text) > 默认。"""
     cfg = load_config()
     try:
         ts2 = cfg.get("template_settings") or {}
+        loop_end = (ts2.get("ending_loop") or "").strip()
+        if loop_end:
+            return loop_end
         if ts2.get("ending_mode") == "manual":
             manual_end = (ts2.get("ending_text") or "").strip()
             if manual_end:

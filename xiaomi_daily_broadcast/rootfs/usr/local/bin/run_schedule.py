@@ -1327,7 +1327,14 @@ function renderWeekPanel(ts){
   h+='<button type="button" class="'+(mode==='llm'?'btn-go':'ghost')+'" style="flex:1;padding:6px" onclick="setTplMode('+active+',\\'llm\\')">🤖 大模型生成</button>';
   h+='</div>';
   if(mode==='llm'){
-    h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:8px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
+    h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:6px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
+    h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">切换模式不会自动生成，点上面的按钮才生成。</div>';
+  }else{
+    // 🔑 手动模式：循环文案（填一条每天都用，优先于逐天）+ 7 天逐天
+    var loopKey=g.weekKey.replace('_days','_loop');
+    var loopVal=ts[loopKey]||'';
+    h+='<label class="eng-label">循环文案（每天都用这一条）</label>';
+    h+='<input class="eng-input" type="text" value="'+esc(loopVal)+'" placeholder="填一条，每天都循环用它；留空则用下面逐天的，或默认" oninput="weekLoopInput(this,\\''+loopKey+'\\')" style="width:100%;box-sizing:border-box;margin-bottom:8px">';
   }
   // 未来 7 天网格（2 列，窄屏自动 1 列）
   var days=ts[g.weekKey]||{};
@@ -1372,10 +1379,7 @@ function setTplMode(si,mode){
   CONFIG.template_settings=ts;
   markDirty();
   renderTplCfg();
-  // 🔑 切到"大模型生成"：立即生成未来7天文案
-  if(mode==='llm'){
-    genWeek(si);
-  }
+  // 🔑 切换模式不自动生成大模型文案；点"生成未来7天"按钮才生成
 }
 // 未来 7 天（从今天起）的日期 + 中文标签（紧凑：今天·周六 / 明天·周日 / 周一）
 function weekLabels(){
@@ -1446,6 +1450,14 @@ function saveTpl(){
       if(d.ok) cfgDirty=false;
     })
     .catch(function(){document.getElementById('tplStatus').textContent='❌ 保存失败';});
+}
+// 🔑 循环文案输入：填一条每天都用（实时写 CONFIG；空=删）
+function weekLoopInput(el,loopKey){
+  var ts=CONFIG.template_settings||{};
+  var v=(el.value||'').trim();
+  if(v) ts[loopKey]=v; else delete ts[loopKey];
+  CONFIG.template_settings=ts;
+  markDirty();
 }
 // 🔑 一周 7 天文案手动输入：实时写 CONFIG（切 tab / 保存都拿到最新值；空=删该天用默认）
 function weekInput(el,wk,date){
