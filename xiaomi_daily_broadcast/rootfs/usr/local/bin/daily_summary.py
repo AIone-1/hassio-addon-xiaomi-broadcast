@@ -281,13 +281,16 @@ def ts(config, key, default):
 
 
 def ts_on(config, section):
-    """板块开关：sections.<section> 默认 True。"""
+    """板块开关：sections.<section> 有配置按配置，没配置用默认。
+    鼓励语(enc)/播报结束(end_marker) 默认关——用户没显式勾选就不播；其余板块默认开。"""
     try:
         secs = (config.get("template_settings") or {}).get("sections")
         if isinstance(secs, dict) and section in secs:
             return bool(secs[section])
     except Exception:
         pass
+    if section in ("enc", "end_marker"):
+        return False
     return True
 
 
@@ -863,9 +866,10 @@ def generate_with_llm(report, config):
         print("  ⚠️ LLM 未配置 base_url，回退模板")
         return None
 
-    # 🔑 板块开关：问候语/结束语可关（LLM 模式也遵循）
+    # 🔑 板块开关：问候语/结束语/鼓励语可关（LLM 模式也遵循）
     _greet_on = ts_on(config, "greeting")
     _end_on = ts_on(config, "ending")
+    _enc_on = ts_on(config, "enc")
     if report.get("summary_type"):
         # 周期总结：用周期专用 prompt（按板块开关调整）
         system_prompt = PERIOD_SYSTEM_PROMPT
@@ -873,8 +877,17 @@ def generate_with_llm(report, config):
             system_prompt = system_prompt.replace(
                 "1. 开头用\"这周/这个月/这一年家里……\"的句式，明确这是周期总结，不是每日播报\n",
                 "1. 不要问候，直接开始播报周期总结内容\n")
-        if not _end_on:
-            system_prompt = system_prompt.replace("最后一句固定说播报结束", "")
+        if _enc_on and _end_on:
+            pass  # 默认：鼓励语 + 播报结束
+        elif _enc_on:
+            system_prompt = system_prompt.replace("4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
+                                                  "4. 结尾给一句温暖的鼓励语\n")
+        elif _end_on:
+            system_prompt = system_prompt.replace("4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
+                                                  "4. 最后一句固定说播报结束\n")
+        else:
+            system_prompt = system_prompt.replace("4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
+                                                  "4. 结尾自然收束\n")
         user_msg = (
             f"现在是{report['time']['weekday']}{report['time']['period']}，"
             f"请播报{report['summary_type']}总结。周期数据如下：\n"
@@ -893,8 +906,15 @@ def generate_with_llm(report, config):
         ]
         if not _greet_on:
             req_lines[1] = "2. 不要问候语，直接开始播报内容"
-        if not _end_on:
-            req_lines[4] = "5. 倒数第二句给一句温暖的鼓励语"
+        # 鼓励语/结束语要求按开关动态调整
+        if _enc_on and _end_on:
+            pass  # 默认不变
+        elif _enc_on:
+            req_lines[4] = "5. 倒数第二句给一句温暖的鼓励语（可参考数据里的鼓励语素材）"
+        elif _end_on:
+            req_lines[4] = "5. 最后一句固定说播报结束"
+        else:
+            req_lines[4] = "5. 不需要鼓励语和结束语"
         system_prompt = ("你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，"
                          "生成一段自然、亲切、口语化的中文播报稿。\n要求：\n"
                          + "\n".join(req_lines) + "\n")
@@ -1603,13 +1623,13 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             report["faults"] = faults
 
         # ─────────────────────────────────────────
-        # 9. 💡 小贴士 + 鼓励
+        # 9. 💡 鼓励语 + 小贴士（两个独立开关：enc=鼓励语 / tip=小贴士）
         # ─────────────────────────────────────────
         h = now.hour
         seed = wd * 7 + now.day
-        # 鼓励语根根据时间选：早上说早安、晚上说晚安
+        # 鼓励语根据时间选：早上说早安、晚上说晚安。独立开关 sec_enc，不跟小贴士走
         encouragement = pick_time(config.get("encouragements", []), h, seed)
-        if ts_on(config, "tip") and encouragement:
+        if ts_on(config, "enc") and encouragement:
             # 🐛 去掉鼓励语里的时间段问候前缀（"早上好/上午好/中午好/下午好/晚上好"），
             # 避免和开头问候语重复（如"下午好...下午好！坚持住"）
             import re as _re
@@ -1648,13 +1668,15 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         engine_cfg = config.get("engine", {})
         engine_mode = engine_cfg.get("mode", "template")
         if engine_mode == "llm":
-            # 把当前时间段的鼓励语素材交给 LLM 参考
-            enc_cfg = config.get("encouragements", {})
-            if isinstance(enc_cfg, dict):
-                bucket = enc_cfg.get("morning" if h < 12 else ("afternoon" if h < 18 else "evening"), [])
-            else:
-                bucket = enc_cfg if isinstance(enc_cfg, list) else []
-            report["encouragement_options"] = bucket[:3]
+            # 把当前时间段的鼓励语素材交给 LLM 参考（鼓励语开关 sec_enc 开了才给）
+            report["encouragement_options"] = []
+            if ts_on(config, "enc"):
+                enc_cfg = config.get("encouragements", {})
+                if isinstance(enc_cfg, dict):
+                    bucket = enc_cfg.get("morning" if h < 12 else ("afternoon" if h < 18 else "evening"), [])
+                else:
+                    bucket = enc_cfg if isinstance(enc_cfg, list) else []
+                report["encouragement_options"] = bucket[:3]
 
             print("  🤖 大模型引擎生成播报...")
             write_broadcast_state('preparing', phase='生成播报稿中', summary_type=summary_type)
@@ -1672,12 +1694,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 end_idx = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
                 if len(end_idx) > 1:
                     lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
-                # 鼓励语兜底：整个稿子都没出现过鼓励词才补，避免重复
+                # 鼓励语兜底：鼓励语开关(sec_enc)开着、且整个稿子都没出现过鼓励词才补，避免重复
                 enc = pick_time(config.get("encouragements", []), h, seed)
                 enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好", "坚持")
                 # 🐛 如果稿子已有收尾句（"就到这里/播报结束"等），不补鼓励语——收尾后不该再有内容
                 _has_ending = any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束"))
-                if enc and not any(kw in "".join(lines) for kw in enc_words) and not _has_ending:
+                if ts_on(config, "enc") and enc and not any(kw in "".join(lines) for kw in enc_words) and not _has_ending:
                     # 🐛 同样去问候前缀，避免和 LLM 稿子的问候语重复
                     import re as _re2
                     enc = _re2.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', enc)
@@ -1725,6 +1747,10 @@ async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="d
     _end_idx = [i for i, l in enumerate(lines) if any(k in l for k in _END_KW)]
     if len(_end_idx) > 1:
         lines = [l for i, l in enumerate(lines) if i not in _end_idx[:-1]]
+
+    # 🔑 板块开关"播报结束"：勾选后播报以"播报结束"四字结尾（已有该字样则不重复加）
+    if ts_on(config, "end_marker") and not any("播报结束" in l for l in lines):
+        lines.append("播报结束。")
 
     clean_lines = []
     for line in lines:
@@ -1831,7 +1857,8 @@ async def run_period_summary(summary_type, now, ws, states, config,
             end_idx = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
             if len(end_idx) > 1:
                 lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
-            if not any(k in "".join(lines) for k in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
+            # 结束语兜底：结束语开关开着、且整个稿子都没有收尾句才补
+            if ts_on(config, "ending") and not any(k in "".join(lines) for k in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
                 lines.append(build_ending(now.hour))
         elif config.get("engine", {}).get("llm", {}).get("fallback_to_template", True):
             print("  ⚠️ LLM 生成失败，回退到规则模板")

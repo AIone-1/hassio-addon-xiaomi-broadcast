@@ -540,6 +540,7 @@ var TPL_GROUPS=[
   {title:'板块开关',fields:[
     {k:'sec_greeting',label:'问候语',def:true,type:'check'},
     {k:'sec_ending',label:'结束语',def:true,type:'check'},
+    {k:'sec_end_marker',label:'播报结束',def:false,type:'check'},
     {k:'sec_temp',label:'温度',def:true,type:'check'},
     {k:'sec_humidity',label:'湿度',def:true,type:'check'},
     {k:'sec_power',label:'用电',def:true,type:'check'},
@@ -549,11 +550,8 @@ var TPL_GROUPS=[
     {k:'sec_task',label:'终端任务',def:true,type:'check'},
     {k:'sec_todo',label:'待办备忘',def:true,type:'check'},
     {k:'sec_fault',label:'设备故障',def:true,type:'check'},
-    {k:'sec_tip',label:'小贴士鼓励',def:true,type:'check'},
-  ]},
-  {title:'文案',fields:[
-    {k:'text_no_sensor',label:'无传感器文案',def:'暂未添加传感器，请先在传感器配置里添加要播报的设备。',type:'text'},
-    {k:'text_temp_prefix',label:'温度前缀',def:'今日温度：',type:'text'},
+    {k:'sec_enc',label:'鼓励语',def:false,type:'check'},
+    {k:'sec_tip',label:'小贴士',def:true,type:'check'},
   ]},
 ];
 function loadTplPage(){
@@ -597,7 +595,7 @@ function renderTplCfg(){
       h+='<div style="padding:12px">';
       g.fields.forEach(function(f){
         var val;
-        if(f.k.indexOf('sec_')===0){ val=secs[f.k.slice(4)]!==false; }
+        if(f.k.indexOf('sec_')===0){ var _sv=secs[f.k.slice(4)]; val=(_sv!==undefined)?_sv:f.def; }
         else{ val=(ts[f.k]!==undefined)?ts[f.k]:f.def; }
         if(f.type==='check'){
           h+='<label class="eng-check"><input type="checkbox" data-tpl="'+f.k+'" '+(val?'checked':'')+'> '+f.label+'</label>';
