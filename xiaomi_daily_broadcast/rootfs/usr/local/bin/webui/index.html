@@ -128,6 +128,11 @@
     <button onclick="saveCfg()" style="margin-top:12px;width:100%">💾 保存配置</button>
     <div class="save-status" id="cfgStatus"></div>
   </div>
+  <div class="card">
+    <div class="sec-title" style="cursor:pointer" onclick="toggleTpl()">⚙️ 模板播报配置 <span id="tplArrow" style="font-size:10px">▸</span></div>
+    <div class="sec-desc">配置模板模式（规则模板）的播报参数：阈值、板块开关、文案等</div>
+    <div id="tplBox" style="display:none;margin-top:8px"></div>
+  </div>
 </div>
 
 <!-- 历史页 -->
@@ -454,6 +459,113 @@ document.addEventListener('click',function(ev){
   }
 });
 
+/* ─── 模板播报配置 ─── */
+var TPL_GROUPS=[
+  {title:'问候语',fields:[
+    {k:'workday_desc',label:'工作日描述',def:'工作日辛苦了',type:'text'},
+    {k:'weekend_desc',label:'周末描述',def:'周末愉快',type:'text'},
+  ]},
+  {title:'温度',fields:[
+    {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
+    {k:'temp_constant_diff',label:'恒温温差阈值(度)',def:1,type:'number'},
+    {k:'temp_exclude_balcony',label:'阳台不参与高温报警',def:true,type:'check'},
+  ]},
+  {title:'湿度',fields:[
+    {k:'humidity_dry',label:'干燥阈值(%)',def:40,type:'number'},
+    {k:'humidity_wet',label:'过湿阈值(%)',def:80,type:'number'},
+  ]},
+  {title:'用电',fields:[
+    {k:'power_show_threshold',label:'显示"共X度"阈值(kWh)',def:0.05,type:'number'},
+    {k:'power_save_threshold',label:'"非常省电"阈值(kWh)',def:0.1,type:'number'},
+    {k:'power_top_n',label:'排行条数',def:3,type:'number'},
+    {k:'power_top_min',label:'排行最低门槛(kWh)',def:0.01,type:'number'},
+    {k:'high_power_alert_w',label:'高功耗提醒阈值(W)',def:200,type:'number'},
+  ]},
+  {title:'安全',fields:[
+    {k:'door_night_hour',label:'晚间门提醒时段(点)',def:18,type:'number'},
+  ]},
+  {title:'空气质量 PM2.5',fields:[
+    {k:'pm25_severe',label:'严重阈值',def:100,type:'number'},
+    {k:'pm25_bad',label:'差阈值',def:50,type:'number'},
+    {k:'pm25_good',label:'好阈值',def:10,type:'number'},
+  ]},
+  {title:'终端任务',fields:[
+    {k:'task_high',label:'"效率很高"阈值(个)',def:10,type:'number'},
+    {k:'task_mid',label:'"进度不错"阈值(个)',def:5,type:'number'},
+  ]},
+  {title:'待办/备忘',fields:[
+    {k:'todo_preview',label:'待办预览条数',def:5,type:'number'},
+    {k:'memo_preview',label:'备忘预览条数',def:8,type:'number'},
+  ]},
+  {title:'设备故障',fields:[
+    {k:'fault_offline_days',label:'离线提醒时间窗(天)',def:3,type:'number'},
+  ]},
+  {title:'板块开关',fields:[
+    {k:'sec_temp',label:'温度',def:true,type:'check'},
+    {k:'sec_humidity',label:'湿度',def:true,type:'check'},
+    {k:'sec_power',label:'用电',def:true,type:'check'},
+    {k:'sec_security',label:'安全',def:true,type:'check'},
+    {k:'sec_pm25',label:'空气质量',def:true,type:'check'},
+    {k:'sec_lights',label:'灯光',def:true,type:'check'},
+    {k:'sec_task',label:'终端任务',def:true,type:'check'},
+    {k:'sec_todo',label:'待办备忘',def:true,type:'check'},
+    {k:'sec_fault',label:'设备故障',def:true,type:'check'},
+    {k:'sec_tip',label:'小贴士鼓励',def:true,type:'check'},
+  ]},
+  {title:'文案',fields:[
+    {k:'text_no_sensor',label:'无传感器文案',def:'暂未添加传感器，请先在传感器配置里添加要播报的设备。',type:'text'},
+    {k:'text_temp_prefix',label:'温度前缀',def:'今日温度：',type:'text'},
+  ]},
+];
+function toggleTpl(){
+  var box=document.getElementById('tplBox');
+  var on=box.style.display!=='block';
+  box.style.display=on?'block':'none';
+  document.getElementById('tplArrow').textContent=on?'▾':'▸';
+  if(on) renderTplCfg();
+}
+function renderTplCfg(){
+  var ts=CONFIG.template_settings||{};
+  var secs=ts.sections||{};
+  var h='';
+  TPL_GROUPS.forEach(function(g){
+    h+='<div class="eng-title">'+g.title+'</div>';
+    g.fields.forEach(function(f){
+      // 板块开关用 sec_ 前缀映射 sections
+      var val;
+      if(f.k.indexOf('sec_')===0){ val=secs[f.k.slice(4)]!==false; }
+      else{ val=(ts[f.k]!==undefined)?ts[f.k]:f.def; }
+      if(f.type==='check'){
+        h+='<label class="eng-check"><input type="checkbox" data-tpl="'+f.k+'" '+(val?'checked':'')+'> '+f.label+'</label>';
+      }else if(f.type==='number'){
+        h+='<label class="eng-label">'+f.label+'</label>';
+        h+='<input class="eng-input" type="number" data-tpl="'+f.k+'" value="'+esc(val)+'">';
+      }else{
+        h+='<label class="eng-label">'+f.label+'</label>';
+        h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'">';
+      }
+    });
+  });
+  h+='<button class="ghost" onclick="collectTplCfg()" style="margin-top:8px;width:100%">✔ 应用模板配置</button>';
+  box.innerHTML=h;
+  box.querySelectorAll('input').forEach(function(inp){
+    inp.addEventListener('input',markDirty);
+  });
+}
+function collectTplCfg(){
+  var ts=CONFIG.template_settings||{};
+  var secs=ts.sections||{};
+  var box=document.getElementById('tplBox');
+  box.querySelectorAll('[data-tpl]').forEach(function(el){
+    var k=el.getAttribute('data-tpl');
+    if(el.type==='checkbox'){ if(k.indexOf('sec_')===0) secs[k.slice(4)]=el.checked; else ts[k]=el.checked; }
+    else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
+    else{ ts[k]=el.value; }
+  });
+  CONFIG.template_settings=ts;
+  if(secs) ts.sections=secs;
+  markDirty();
+}
 // 手动条目实体 id 输入：同步更新 CONFIG（去掉空实体 id）
 function manualEid(el,key){
   var box=document.getElementById('sec-'+key);
@@ -487,6 +599,7 @@ function saveCfg(){
     lights: CONFIG.lights||{},
     doors: CONFIG.doors||{},
     important_devices: CONFIG.important_devices||{},
+    template_settings: CONFIG.template_settings||{},
   };
   fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:updates})})
     .then(function(r){return r.json()})

@@ -269,6 +269,28 @@ POWER_BASELINE = Path("/data/power_baseline.json")
 POWER_INTEGRAL = Path("/data/power_integral.json")
 
 
+def ts(config, key, default):
+    """读 template_settings 配置项，带默认值兜底。"""
+    try:
+        v = (config.get("template_settings") or {}).get(key)
+        if v is not None:
+            return v
+    except Exception:
+        pass
+    return default
+
+
+def ts_on(config, section):
+    """板块开关：sections.<section> 默认 True。"""
+    try:
+        secs = (config.get("template_settings") or {}).get("sections")
+        if isinstance(secs, dict) and section in secs:
+            return bool(secs[section])
+    except Exception:
+        pass
+    return True
+
+
 def load_power_baseline():
     """读每日累计差值基准：{"date": "2026-08-08", "baselines": {entity_id: value}}"""
     try:
@@ -1148,22 +1170,24 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # 构建播报内容
         # ═══════════════════════════════════════════
 
-        # 根据实际时间判断问候语
+        # 根据实际时间判断问候语（词可配置）
         h = now.hour
+        _gw = ts(config, "greeting_words", {})
         if h < 6:
-            greeting = "凌晨好"; period = "凌晨"
+            greeting = _gw.get("night", "凌晨好"); period = "凌晨"
         elif h < 9:
-            greeting = "早上好"; period = "早上"
+            greeting = _gw.get("morning", "早上好"); period = "早上"
         elif h < 12:
-            greeting = "上午好"; period = "上午"
+            greeting = _gw.get("am", "上午好"); period = "上午"
         elif h < 14:
-            greeting = "中午好"; period = "中午"
+            greeting = _gw.get("noon", "中午好"); period = "中午"
         elif h < 18:
-            greeting = "下午好"; period = "下午"
+            greeting = _gw.get("pm", "下午好"); period = "下午"
         else:
-            greeting = "晚上好"; period = "晚上"
-        day_desc = "周末愉快" if wd >= 5 else "工作日辛苦了"
-        lines = [f"{greeting}！今天是{weekday_names[wd]}，{day_desc}。"]
+            greeting = _gw.get("evening", "晚上好"); period = "晚上"
+        day_desc = ts(config, "weekend_desc", "周末愉快") if wd >= 5 else ts(config, "workday_desc", "工作日辛苦了")
+        gfmt = ts(config, "greeting_format", "{greeting}！今天是{weekday}，{day_desc}。")
+        lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
 
         # 📌 检查是否配置了任何传感器实体：全空 → 播报提示"暂未添加传感器"
         _any_sensor = (
@@ -1176,7 +1200,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         )
         if not _any_sensor:
             # 全空：直接播"暂未添加传感器"，跳过所有板块生成（避免缺键报错）
-            lines.append("暂未添加传感器，请先在传感器配置里添加要播报的设备。")
+            lines.append(ts(config, "text_no_sensor", "暂未添加传感器，请先在传感器配置里添加要播报的设备。"))
             await broadcast_sentences(lines, now, ws, config, text_only, summary_type="daily")
             return
 
@@ -1196,44 +1220,51 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         temp_parts = []
         temp_alerts = []
-        for eid, room in config["temp_sensors"].items():
-            cur = get_float(states, eid)
-            hist = temp_history.get(eid, [])
-            if cur is None:
-                continue
-            entry = {"room": room, "now": round(cur, 1)}
-            if hist:
-                hi, lo = max(hist), min(hist)
-                entry["low"], entry["high"] = round(lo, 1), round(hi, 1)
-                if hi - lo < 1:
-                    temp_parts.append(f"{room}全天{cur:.0f}度")
+        if ts_on(config, "temp"):
+            temp_high = ts(config, "temp_high_alert", 32)
+            temp_diff = ts(config, "temp_constant_diff", 1)
+            excl_balcony = ts(config, "temp_exclude_balcony", True)
+            for eid, room in config["temp_sensors"].items():
+                cur = get_float(states, eid)
+                hist = temp_history.get(eid, [])
+                if cur is None:
+                    continue
+                entry = {"room": room, "now": round(cur, 1)}
+                if hist:
+                    hi, lo = max(hist), min(hist)
+                    entry["low"], entry["high"] = round(lo, 1), round(hi, 1)
+                    if hi - lo < temp_diff:
+                        temp_parts.append(f"{room}全天{cur:.0f}度")
+                    else:
+                        temp_parts.append(f"{room}当前{cur:.0f}度，全天{lo:.0f}到{hi:.0f}度")
                 else:
-                    temp_parts.append(f"{room}当前{cur:.0f}度，全天{lo:.0f}到{hi:.0f}度")
-            else:
-                temp_parts.append(f"{room}当前{cur:.0f}度")
-            if cur > 32 and "阳台" not in room:
-                temp_alerts.append(f"{room} {cur:.0f}度偏高")
-            report["temperature"].append(entry)
+                    temp_parts.append(f"{room}当前{cur:.0f}度")
+                if cur > temp_high and not (excl_balcony and "阳台" in room):
+                    temp_alerts.append(f"{room} {cur:.0f}度偏高")
+                report["temperature"].append(entry)
 
         hum_parts = []
-        hums = {}
-        for eid, room in config["humidity_sensors"].items():
-            v = get_float(states, eid)
-            if v is not None and v <= 100:
-                hums[room] = v
-        dry = [r for r, h in hums.items() if h < 40]
-        wet = [r for r, h in hums.items() if h > 80]
-        if dry:
-            hum_parts.append(f"{'、'.join(dry)}比较干燥，可以开加湿器")
-        if wet:
-            hum_parts.append(f"{'、'.join(wet)}湿度偏高，注意通风除湿")
-        report["humidity_dry"] = dry
-        report["humidity_wet"] = wet
+        if ts_on(config, "humidity"):
+            hums = {}
+            for eid, room in config["humidity_sensors"].items():
+                v = get_float(states, eid)
+                if v is not None and v <= 100:
+                    hums[room] = v
+            dry_th = ts(config, "humidity_dry", 40)
+            wet_th = ts(config, "humidity_wet", 80)
+            dry = [r for r, h in hums.items() if h < dry_th]
+            wet = [r for r, h in hums.items() if h > wet_th]
+            if dry:
+                hum_parts.append(f"{'、'.join(dry)}比较干燥，可以开加湿器")
+            if wet:
+                hum_parts.append(f"{'、'.join(wet)}湿度偏高，注意通风除湿")
+            report["humidity_dry"] = dry
+            report["humidity_wet"] = wet
         report["temp_alerts"] = temp_alerts
 
         temp_hum = ""
         if temp_parts:
-            temp_hum = "今日温度：" + "，".join(temp_parts)
+            temp_hum = ts(config, "text_temp_prefix", "今日温度：") + "，".join(temp_parts)
         if temp_alerts:
             temp_hum += "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
         if hum_parts:
@@ -1249,16 +1280,20 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         print(f"  ⚡ 今日电量明细: {json.dumps(device_energy, ensure_ascii=False)}")
 
         power_line = ""
-        if device_energy:
+        if ts_on(config, "power") and device_energy:
+            top_n = ts(config, "power_top_n", 3)
+            top_min = ts(config, "power_top_min", 0.01)
+            show_th = ts(config, "power_show_threshold", 0.05)
+            save_th = ts(config, "power_save_threshold", 0.1)
             ranked = sorted(device_energy.items(), key=lambda x: -x[1])
-            top3 = [(n, k) for n, k in ranked[:3] if k > 0.01]
-            if total_kwh > 0.05:
+            top3 = [(n, k) for n, k in ranked[:top_n] if k > top_min]
+            if total_kwh > show_th:
                 power_line = f"今日用电共{total_kwh:.1f}度"
                 if top3:
                     top_parts = [f"{n}耗电{k:.1f}度" for n, k in top3]
-                    power_line += "，排名前三：" + "，".join(top_parts)
+                    power_line += "，排名前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(top_parts)
             elif total_kwh > 0:
-                power_line = "今日用电不到0.1度，非常省电"
+                power_line = f"今日用电不到{min(0.1, save_th):.1f}度，非常省电"
 
             # 高功耗提醒用实时功率传感器（electric_power）
             high_alert = config.get("high_power_alert_w", 200)
@@ -1289,7 +1324,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         special_parts = []
         # 没配置门窗传感器 → 整个安全板块跳过（不报"门窗都已关好"这种误报）
         doors_cfg = config.get("doors") or {}
-        if doors_cfg:
+        if ts_on(config, "security") and doors_cfg:
+            night_hour = ts(config, "door_night_hour", 18)
             for eid, name in doors_cfg.items():
                 if states.get(eid, {}).get("state") == "on":
                     if name.endswith("盖") or name.endswith("盖子"):
@@ -1305,7 +1341,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     door_parts.append(d)
 
             if door_parts:
-                if h >= 18:
+                if h >= night_hour:
                     safety_parts.append(f"{'、'.join(door_parts)}还开着，睡前记得关好")
                 else:
                     safety_parts.append(f"{'、'.join(door_parts)}还开着")
@@ -1337,12 +1373,15 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         pm25 = get_float(states, config.get("pm25_sensor", ""))
         report["pm25"] = pm25
-        if pm25 is not None:
-            if pm25 > 100:
+        if ts_on(config, "pm25") and pm25 is not None:
+            sev = ts(config, "pm25_severe", 100)
+            bad = ts(config, "pm25_bad", 50)
+            good = ts(config, "pm25_good", 10)
+            if pm25 > sev:
                 lines.append(f"PM2.5为{pm25:.0f}，严重污染，建议关闭门窗开净化器。")
-            elif pm25 > 50:
+            elif pm25 > bad:
                 lines.append(f"PM2.5为{pm25:.0f}，空气质量差，建议开净化器。")
-            elif pm25 < 10:
+            elif pm25 < good:
                 lines.append(f"PM2.5只有{pm25:.0f}，空气特别好，可以开窗通风。")
 
         # ─────────────────────────────────────────
@@ -1352,7 +1391,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         lights_on = [n for eid, n in lights_cfg.items()
                      if states.get(eid, {}).get("state") == "on"]
         report["lights_on"] = lights_on
-        if lights_cfg:
+        if ts_on(config, "lights") and lights_cfg:
             if lights_on:
                 lines.append(f"{'、'.join(lights_on)}还亮着，不需要的话可以关掉。")
             else:
@@ -1363,10 +1402,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         task_count = count_today_tasks()
         report["tasks_done"] = task_count
-        if task_count > 0:
-            if task_count >= 10:
+        if ts_on(config, "task") and task_count > 0:
+            t_high = ts(config, "task_high", 10)
+            t_mid = ts(config, "task_mid", 5)
+            if task_count >= t_high:
                 lines.append(f"今天完成了{task_count}个终端任务，效率很高。")
-            elif task_count >= 5:
+            elif task_count >= t_mid:
                 lines.append(f"今天完成了{task_count}个终端任务，进度不错。")
             else:
                 lines.append(f"今天完成了{task_count}个终端任务。")
@@ -1417,14 +1458,15 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         # 8. ⚙️ 设备故障
         # ─────────────────────────────────────────
-        if "important_devices" in config:
+        if ts_on(config, "fault") and "important_devices" in config:
             from datetime import timedelta
             faults = []
-            cutoff = now - timedelta(days=3)
+            off_days = ts(config, "fault_offline_days", 3)
+            cutoff = now - timedelta(days=off_days)
             for eid, label in config["important_devices"].items():
                 s = states.get(eid)
                 if s and s.get("state") == "unavailable":
-                    # 超过 3 天离线的不提醒
+                    # 超过 N 天离线的不提醒
                     lc = s.get("last_changed", "")
                     if lc:
                         try:
@@ -1445,7 +1487,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         seed = wd * 7 + now.day
         # 鼓励语根根据时间选：早上说早安、晚上说晚安
         encouragement = pick_time(config.get("encouragements", []), h, seed)
-        if encouragement:
+        if ts_on(config, "tip") and encouragement:
             # 🐛 去掉鼓励语里的时间段问候前缀（"早上好/上午好/中午好/下午好/晚上好"），
             # 避免和开头问候语重复（如"下午好...下午好！坚持住"）
             import re as _re
@@ -1455,7 +1497,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # 小贴士也按时间段
         tip = pick_time(config.get("daily_tips", []), h, seed)
         report["tip"] = tip
-        if tip:
+        if ts_on(config, "tip") and tip:
             if h < 12:
                 lines.append(f"小贴士：{tip}")
             elif h < 18:
