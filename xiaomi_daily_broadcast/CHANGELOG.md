@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.38 (2026-08-08)
+
+- ⏹ 修停止仍无效：media_stop 因 Pro8 实体缺 feature 被拒 → 改用 intelligent_speaker 发"停止播放"文字指令（实测能停 TTS）+ media_play_pause 组合
+
 ## 1.1.37 (2026-08-08)
 
 - 📝 传感器配置条目新增"用途"字段（房间名前，可自定义填写）：配置值改为 {room, usage}，后端 load_config 兼容转回 room（旧字符串格式也兼容）

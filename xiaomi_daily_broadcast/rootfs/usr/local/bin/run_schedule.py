@@ -160,7 +160,9 @@ def _ws_connect():
 
 
 def stop_speaker(notify_entity):
-    """⏹ 停止音箱播放：media_stop 所有小米音箱（含 x08a 等 Pro 系，之前 xiao_ai 匹配漏掉）。"""
+    """⏹ 停止音箱播放：
+    1. intelligent_speaker 发"停止播放"文字指令（实测能停小米云 TTS）
+    2. media_play_pause（Pro8 支持的暂停；media_stop 因缺 feature 被拒不可用）"""
     import websockets
     try:
         ws_url, token = _ws_connect()
@@ -179,12 +181,21 @@ def stop_speaker(notify_entity):
                     if eid.startswith("media_player.") and ("xiao_ai" in low or "x08a" in low or "xiaomi" in low):
                         mp_targets.append(eid)
                 log(f"⏹ 停止音箱: {mp_targets}")
-                # 用 media_stop（比 pause 强，能停 TTS）
                 for eid in mp_targets:
+                    # 1. intelligent_speaker 发"停止播放"（能停 TTS）
+                    try:
+                        await ws.send(json.dumps({"type": "call_service", "domain": "xiaomi_miot",
+                                                  "service": "intelligent_speaker",
+                                                  "service_data": {"entity_id": eid, "text": "停止播放", "execute": True},
+                                                  "id": 10}))
+                        await ws.recv()
+                    except Exception:
+                        pass
+                    # 2. media_play_pause（Pro8 支持的暂停）
                     try:
                         await ws.send(json.dumps({"type": "call_service", "domain": "media_player",
-                                                  "service": "media_stop",
-                                                  "service_data": {"entity_id": eid}, "id": 10}))
+                                                  "service": "media_play_pause",
+                                                  "service_data": {"entity_id": eid}, "id": 11}))
                         await ws.recv()
                     except Exception:
                         pass
