@@ -863,27 +863,41 @@ def generate_with_llm(report, config):
         print("  ⚠️ LLM 未配置 base_url，回退模板")
         return None
 
+    # 🔑 板块开关：问候语/结束语可关（LLM 模式也遵循）
+    _greet_on = ts_on(config, "greeting")
+    _end_on = ts_on(config, "ending")
     if report.get("summary_type"):
-        # 周期总结：用周期专用 prompt
+        # 周期总结：用周期专用 prompt（按板块开关调整）
         system_prompt = PERIOD_SYSTEM_PROMPT
+        if not _greet_on:
+            system_prompt = system_prompt.replace(
+                "1. 开头用\"这周/这个月/这一年家里……\"的句式，明确这是周期总结，不是每日播报\n",
+                "1. 不要问候，直接开始播报周期总结内容\n")
+        if not _end_on:
+            system_prompt = system_prompt.replace("最后一句固定说播报结束", "")
         user_msg = (
             f"现在是{report['time']['weekday']}{report['time']['period']}，"
             f"请播报{report['summary_type']}总结。周期数据如下：\n"
             f"{json.dumps(report, ensure_ascii=False)}"
         )
     else:
-        system_prompt = (
-            "你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，生成一段自然、亲切、口语化的中文播报稿。\n"
-            "要求：\n"
-            "1. 语气像家人朋友闲聊，自然亲切，不要说\"数据如下\"\"第一点\"这类书面语，不要念报告\n"
-            "2. 开头按时间段问候一次（如\"中午好\"\"下午好\"），**整篇播报中问候语只能出现一次**，绝对不要重复出现\"中午好\"\"下午好\"等\n"
-            "3. 然后自然带出温度、湿度、用电、安全、空气质量、灯光的情况\n"
-            "4. 异常情况（温度偏高、门窗开着、灯还亮着、用电偏高、设备离线）必须自然提醒并给建议\n"
-            "5. 倒数第二句给一句温暖的鼓励语（可参考数据里的鼓励语素材），最后一句固定说播报结束\n"
-            "6. 全文120到220字，分成5到9句，每句独立成行，句号结尾，不要多余空行\n"
-            "7. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\n"
-            "8. 适合语音朗读：不要括号、列表序号、表情符号、英文\n"
-        )
+        req_lines = [
+            "1. 语气像家人朋友闲聊，自然亲切，不要说\"数据如下\"\"第一点\"这类书面语，不要念报告",
+            "2. 开头按时间段问候一次（如\"中午好\"\"下午好\"），**整篇播报中问候语只能出现一次**，绝对不要重复出现\"中午好\"\"下午好\"等",
+            "3. 然后自然带出温度、湿度、用电、安全、空气质量、灯光的情况",
+            "4. 异常情况（温度偏高、门窗开着、灯还亮着、用电偏高、设备离线）必须自然提醒并给建议",
+            "5. 倒数第二句给一句温暖的鼓励语（可参考数据里的鼓励语素材），最后一句固定说播报结束",
+            "6. 全文120到220字，分成5到9句，每句独立成行，句号结尾，不要多余空行",
+            "7. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown",
+            "8. 适合语音朗读：不要括号、列表序号、表情符号、英文",
+        ]
+        if not _greet_on:
+            req_lines[1] = "2. 不要问候语，直接开始播报内容"
+        if not _end_on:
+            req_lines[4] = "5. 倒数第二句给一句温暖的鼓励语"
+        system_prompt = ("你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，"
+                         "生成一段自然、亲切、口语化的中文播报稿。\n要求：\n"
+                         + "\n".join(req_lines) + "\n")
         user_msg = (
             f"现在是{report['time']['weekday']}{report['time']['period']}，请播报家中情况。\n"
             f"家里实时数据如下：\n{json.dumps(report, ensure_ascii=False)}"
@@ -1120,14 +1134,16 @@ def aggregate_period(summary_type, now, config):
 # ═══════════════════════════════════════════════════════
 
 def build_period_text(summary_type, ps, now, config):
-    """按周期类型生成模板文案（句子列表）。"""
+    """按周期类型生成模板文案（句子列表）。板块开关：问候语/结束语可关。"""
     period_label = {"weekly": "本周", "monthly": "这个月", "yearly": "这一年"}[summary_type]
     # 🔑 当天有手动/大模型生成的一周问候语缓存 → 整句使用；否则用默认
-    _gcache = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
-    if _gcache:
-        lines = [_gcache]
-    else:
-        lines = [f"晚上好！{period_label}的家中总结来了。"]
+    lines = []
+    if ts_on(config, "greeting"):
+        _gcache = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
+        if _gcache:
+            lines = [_gcache]
+        else:
+            lines = [f"晚上好！{period_label}的家中总结来了。"]
 
     t = ps["temp"]["overall"]
     if t:
@@ -1157,9 +1173,10 @@ def build_period_text(summary_type, ps, now, config):
     if ps["memos_active_now"]:
         lines.append(f"目前还有{ps['memos_active_now']}条备忘待处理。")
 
-    # 结束语：优先用当天配置的（手动/大模型一周缓存），否则按时间段默认
-    _ecache = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
-    lines.append(_ecache if _ecache else build_ending(now.hour))
+    # 结束语：板块开关可关；优先用当天配置的（手动/大模型一周缓存），否则按时间段默认
+    if ts_on(config, "ending"):
+        _ecache = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
+        lines.append(_ecache if _ecache else build_ending(now.hour))
     return lines
 
 
@@ -1284,11 +1301,14 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         day_desc = ts(config, "weekend_desc", "周末愉快") if wd >= 5 else ts(config, "workday_desc", "工作日辛苦了")
         gfmt = ts(config, "greeting_format", "{greeting}！今天是{weekday}，{day_desc}。")
         # 🔑 当天有手动/大模型生成的一周问候语缓存 → 整句使用；否则用格式模板
-        _greet_cached = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
-        if _greet_cached:
-            lines = [_greet_cached]
-        else:
-            lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
+        # 板块开关：问候语可关（sections.greeting=false 不播问候，直接从板块内容开始）
+        lines = []
+        if ts_on(config, "greeting"):
+            _greet_cached = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
+            if _greet_cached:
+                lines = [_greet_cached]
+            else:
+                lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
 
         # 📌 检查是否配置了任何传感器实体：全空 → 播报提示"暂未添加传感器"
         _any_sensor = (
@@ -1559,9 +1579,10 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         # 8. ⚙️ 设备故障
         # ─────────────────────────────────────────
+        # 🐛 faults 必须无条件初始化——板块开关关掉 fault 时下方 write_daily_snapshot 还会引用它
+        faults = []
         if ts_on(config, "fault") and "important_devices" in config:
             from datetime import timedelta
-            faults = []
             off_days = ts(config, "fault_offline_days", 3)
             cutoff = now - timedelta(days=off_days)
             for eid, label in config["important_devices"].items():
@@ -1608,13 +1629,18 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             else:
                 lines.append(f"睡前小提示：{tip}")
 
-        # 结束语：优先用当天配置的（手动/大模型一周缓存），否则按时间段默认
-        _ending = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
-        lines.append(_ending if _ending else build_ending(h))
+        # 结束语：板块开关可关（sections.ending=false 不播结束语）；优先用当天配置的，否则按时间段默认
+        if ts_on(config, "ending"):
+            _ending = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
+            lines.append(_ending if _ending else build_ending(h))
 
         # 📸 每日快照落盘（周期总结的数据源，先于播报）
         write_daily_snapshot(now, config, states, temp_history, device_energy,
                              task_count, pm25, lights_on, memos, open_doors, faults)
+
+        # 🐛 全空保护：所有板块+问候+结束语都关了 → 播提示，不播空稿
+        if not lines:
+            lines.append("当前没有开启任何播报板块，请到模板配置的板块开关里开启。")
 
         # ═══════════════════════════════════════════
         # 引擎选择：template=规则模板（原方案）/ llm=大模型生成
@@ -1657,8 +1683,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     enc = _re2.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', enc)
                     if enc:
                         lines.append(enc)
-                # 结束语兜底：整个稿子都没有收尾句才补（识别各种收尾形式，避免重复）
-                if not any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
+                # 结束语兜底：板块开关结束语开着、且整个稿子都没有收尾句才补（识别各种收尾形式，避免重复）
+                if ts_on(config, "ending") and not any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
                     lines.append(build_ending(h))
             elif engine_cfg.get("llm", {}).get("fallback_to_template", True):
                 print("  ⚠️ LLM 生成失败，回退到规则模板")

@@ -1298,6 +1298,8 @@ var TPL_GROUPS=[
     {k:'fault_offline_days',label:'离线提醒时间窗(天)',def:3,type:'number'},
   ]},
   {title:'板块开关',fields:[
+    {k:'sec_greeting',label:'问候语',def:true,type:'check'},
+    {k:'sec_ending',label:'结束语',def:true,type:'check'},
     {k:'sec_temp',label:'温度',def:true,type:'check'},
     {k:'sec_humidity',label:'湿度',def:true,type:'check'},
     {k:'sec_power',label:'用电',def:true,type:'check'},
