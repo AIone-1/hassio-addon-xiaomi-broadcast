@@ -56,6 +56,7 @@
 - `lights`：灯光
 - `important_devices`：重要设备（离线提醒）
 - `encouragements` / `daily_tips`：鼓励语/小贴士
+- `template_settings.greeting_days` / `ending_days` / `tip_days`：一周 7 天（按日期 `YYYY-MM-DD`）的问候语/结束语/小贴士，网页「🧩 模板配置」里手动填或用大模型生成，播报优先用当天那条，当天没有回退默认
 
 ## 🎙️ 你的音箱怎么接入
 

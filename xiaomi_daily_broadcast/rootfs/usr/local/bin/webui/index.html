@@ -471,13 +471,14 @@ document.addEventListener('click',function(ev){
 
 /* ─── 模板播报配置 ─── */
 var TPL_GROUPS=[
-  {title:'问候语',open:true,dualMode:true,modeKey:'greeting_mode',fields:[
+  {title:'问候语',open:true,dualMode:true,modeKey:'greeting_mode',weekKey:'greeting_days',fields:[
     {k:'workday_desc',label:'工作日描述',def:'工作日辛苦了',type:'text'},
     {k:'weekend_desc',label:'周末描述',def:'周末愉快',type:'text'},
   ]},
-  {title:'结束语',dualMode:true,modeKey:'ending_mode',fields:[
+  {title:'结束语',open:true,dualMode:true,modeKey:'ending_mode',weekKey:'ending_days',fields:[
     {k:'ending_text',label:'手动结束语（留空用默认）',def:'',type:'textarea'},
   ]},
+  {title:'小贴士',open:true,dualMode:true,modeKey:'tip_mode',weekKey:'tip_days',fields:[]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
     {k:'temp_constant_diff',label:'恒温温差阈值(度)',def:1,type:'number'},
@@ -572,7 +573,7 @@ function renderTplCfg(){
         h+='<button type="button" class="'+(mode!=='llm'?'btn-go':'ghost')+'" style="flex:1;padding:7px" onclick="setTplMode('+gi+',\'manual\')">✍️ 手动填写</button>';
         h+='</div>';
         if(mode==='llm'){
-          h+='<div style="font-size:11px;color:var(--accent2);margin-bottom:8px">🤖 将用大模型自动生成'+g.title+'，保存后生效</div>';
+          h+='<div style="font-size:11px;color:var(--accent2);margin-bottom:8px">🤖 将用大模型生成未来7天'+g.title+'（结合节日/星期/天气），生成结果在下方，保存后生效</div>';
         }
       }
       g.fields.forEach(function(f){
@@ -592,6 +593,26 @@ function renderTplCfg(){
           h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'">';
         }
       });
+      // 🔑 一周 7 天文案（问候语/结束语/小贴士）：大模型模式=生成按钮+只读预览；手动模式=7 个输入框
+      if(g.weekKey){
+        if(mode==='llm'){
+          h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:8px" onclick="genWeek('+gi+')">🤖 生成未来7天'+g.title+'</button>';
+        }
+        var days=ts[g.weekKey]||{};
+        var labels=weekLabels();
+        for(var wi=0; wi<7; wi++){
+          var w=labels[wi];
+          var val=days[w.ds]||'';
+          h+='<div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">';
+          h+='<div style="flex:0 0 100px;font-size:11px;color:var(--dim)">'+w.lbl+'</div>';
+          if(mode==='llm'){
+            h+='<div style="flex:1;font-size:12px;color:var(--accent2);border:1px solid var(--border);border-radius:6px;padding:7px 8px;background:var(--bg-inset)">'+esc(val||'（留空=播报时用默认）')+'</div>';
+          }else{
+            h+='<input class="eng-input" type="text" data-week="'+g.weekKey+'" data-date="'+w.ds+'" value="'+esc(val)+'" placeholder="留空=播报时用默认" style="flex:1;min-width:0">';
+          }
+          h+='</div>';
+        }
+      }
       h+='</div>';
     }
     h+='</div>';
@@ -613,20 +634,45 @@ function setTplMode(gi,mode){
   ts[g.modeKey]=mode;
   CONFIG.template_settings=ts;
   markDirty();
-  // 问候语选"大模型生成"时，立即生成并存
-  if(g.modeKey==='greeting_mode' && mode==='llm'){
-    document.getElementById('tplStatus').textContent='🤖 正在生成问候语...';
-    fetch(BASE+'tpl/greeting',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-      if(d.ok && d.greeting){
-        ts.greeting_generated=d.greeting;
-        CONFIG.template_settings=ts;
-        document.getElementById('tplStatus').textContent='✅ 已生成问候语：'+d.greeting;
-      }else{
-        document.getElementById('tplStatus').textContent='❌ 生成失败：'+(d.error||'');
-      }
-    }).catch(function(){document.getElementById('tplStatus').textContent='❌ 生成失败';});
-  }
   renderTplCfg();
+  // 🔑 双模式组切到"大模型生成"：立即生成未来7天文案（问候语/结束语/小贴士），显示在下方
+  if(mode==='llm' && g.weekKey){
+    genWeek(gi);
+  }
+}
+// 未来 7 天（从今天起）的日期 + 中文标签
+function weekLabels(){
+  var wd=['周日','周一','周二','周三','周四','周五','周六'];
+  var out=[];
+  for(var i=0;i<7;i++){
+    var d=new Date(); d.setDate(d.getDate()+i);
+    var ds=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    var lbl=(i===0?'今天 ':(i===1?'明天 ':'') )+wd[d.getDay()]+' '+(d.getMonth()+1)+'月'+d.getDate()+'日';
+    out.push({ds:ds,lbl:lbl});
+  }
+  return out;
+}
+// 🤖 调后端生成未来7天文案并存到 template_settings（问候语/结束语/小贴士）
+function genWeek(gi){
+  var g=TPL_GROUPS[gi];
+  var secName=g.weekKey.replace('_days','');
+  var statusEl=document.getElementById('tplStatus');
+  statusEl.textContent='🤖 正在生成未来7天'+g.title+'（约30秒）...';
+  fetch(BASE+'tpl/week',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:secName})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok && d.days){
+        var ts=CONFIG.template_settings||{};
+        ts[g.weekKey]=d.days;
+        CONFIG.template_settings=ts;
+        markDirty();
+        renderTplCfg();
+        statusEl.textContent='✅ 已生成未来7天'+g.title;
+      }else{
+        statusEl.textContent='❌ 生成失败：'+(d.error||'未知错误');
+      }
+    })
+    .catch(function(){statusEl.textContent='❌ 生成失败（网络或超时）';});
 }
 function saveTpl(){
   // 🔑 收集模板配置并保存
@@ -639,6 +685,14 @@ function saveTpl(){
       if(el.type==='checkbox'){ if(k.indexOf('sec_')===0) secs[k.slice(4)]=el.checked; else ts[k]=el.checked; }
       else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
       else{ ts[k]=el.value; }
+    });
+    // 🔑 一周 7 天文案（问候语/结束语/小贴士）：收集手动填写，空=删该天（播报时用默认）
+    box.querySelectorAll('[data-week]').forEach(function(el){
+      var wk=el.getAttribute('data-week');
+      var dt=el.getAttribute('data-date');
+      var v=(el.value||'').trim();
+      if(!ts[wk]) ts[wk]={};
+      if(v) ts[wk][dt]=v; else delete ts[wk][dt];
     });
   }
   CONFIG.template_settings=ts;

@@ -291,6 +291,21 @@ def ts_on(config, section):
     return True
 
 
+def week_day_text(config, prefix, today_str):
+    """读模板配置的 7 天文案缓存（template_settings.<prefix>_days）取当天内容。
+    prefix: greeting / ending / tip。无当天内容返回 None，上层回退默认逻辑。"""
+    try:
+        ts_cfg = config.get("template_settings") or {}
+        days = ts_cfg.get(prefix + "_days") or {}
+        if isinstance(days, dict):
+            v = days.get(today_str)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    except Exception:
+        pass
+    return None
+
+
 def apply_section_filters(report, config):
     """🔑 大模型生成前：按模板配置的板块开关，清空 report 里关掉板块的数据。
     report 字段 → sections 键映射。"""
@@ -1066,7 +1081,12 @@ def aggregate_period(summary_type, now, config):
 def build_period_text(summary_type, ps, now, config):
     """按周期类型生成模板文案（句子列表）。"""
     period_label = {"weekly": "本周", "monthly": "这个月", "yearly": "这一年"}[summary_type]
-    lines = [f"晚上好！{period_label}的家中总结来了。"]
+    # 🔑 当天有手动/大模型生成的一周问候语缓存 → 整句使用；否则用默认
+    _gcache = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
+    if _gcache:
+        lines = [_gcache]
+    else:
+        lines = [f"晚上好！{period_label}的家中总结来了。"]
 
     t = ps["temp"]["overall"]
     if t:
@@ -1096,7 +1116,9 @@ def build_period_text(summary_type, ps, now, config):
     if ps["memos_active_now"]:
         lines.append(f"目前还有{ps['memos_active_now']}条备忘待处理。")
 
-    lines.append(build_ending(now.hour))
+    # 结束语：优先用当天配置的（手动/大模型一周缓存），否则按时间段默认
+    _ecache = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
+    lines.append(_ecache if _ecache else build_ending(now.hour))
     return lines
 
 
@@ -1220,7 +1242,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             greeting = _gw.get("evening", "晚上好"); period = "晚上"
         day_desc = ts(config, "weekend_desc", "周末愉快") if wd >= 5 else ts(config, "workday_desc", "工作日辛苦了")
         gfmt = ts(config, "greeting_format", "{greeting}！今天是{weekday}，{day_desc}。")
-        lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
+        # 🔑 当天有手动/大模型生成的一周问候语缓存 → 整句使用；否则用格式模板
+        _greet_cached = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
+        if _greet_cached:
+            lines = [_greet_cached]
+        else:
+            lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
 
         # 📌 检查是否配置了任何传感器实体：全空 → 播报提示"暂未添加传感器"
         _any_sensor = (
@@ -1527,8 +1554,10 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             encouragement = _re.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', encouragement)
             if encouragement:
                 lines.append(encouragement)
-        # 小贴士也按时间段
-        tip = pick_time(config.get("daily_tips", []), h, seed)
+        # 小贴士：优先用当天配置的（手动/大模型一周缓存），否则按时间段从库选
+        tip = week_day_text(config, "tip", now.strftime("%Y-%m-%d"))
+        if not tip:
+            tip = pick_time(config.get("daily_tips", []), h, seed)
         report["tip"] = tip
         if ts_on(config, "tip") and tip:
             if h < 12:
@@ -1538,8 +1567,9 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             else:
                 lines.append(f"睡前小提示：{tip}")
 
-        # 结束语
-        lines.append(build_ending(h))
+        # 结束语：优先用当天配置的（手动/大模型一周缓存），否则按时间段默认
+        _ending = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
+        lines.append(_ending if _ending else build_ending(h))
 
         # 📸 每日快照落盘（周期总结的数据源，先于播报）
         write_daily_snapshot(now, config, states, temp_history, device_energy,

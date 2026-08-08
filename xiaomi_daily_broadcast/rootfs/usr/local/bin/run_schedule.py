@@ -11,7 +11,7 @@
   POST /memo        → 追加备忘
 """
 import asyncio, json, os, threading, time
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -212,6 +212,130 @@ def generate_greeting():
     except Exception as e:
         log(f"⚠️ 生成问候语失败: {e}")
     return "你好呀，欢迎收听今天的小爱播报。"
+
+
+# ── 一周 7 天文案（问候语/结束语/小贴士）：手动填写 + 大模型生成 ──
+WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+# 阳历固定节日（月-日 → 名称）。农历节日随年份浮动，不写死；靠日期/星期/天气让模型自行发挥
+FESTIVALS = {
+    "01-01": "元旦", "02-14": "情人节", "03-08": "妇女节", "03-12": "植树节",
+    "04-01": "愚人节", "05-01": "劳动节", "05-04": "青年节", "06-01": "儿童节",
+    "07-01": "建党节", "08-01": "建军节", "09-10": "教师节", "10-01": "国庆节",
+    "12-24": "平安夜", "12-25": "圣诞节",
+}
+
+WEATHER_CN = {"clear-night": "晴", "sunny": "晴", "partlycloudy": "多云", "cloudy": "阴",
+              "rainy": "小雨", "pouring": "大雨", "snowy": "雪", "fog": "雾", "windy": "风大"}
+
+SECTION_META = {
+    "greeting": ("问候语", "一句自然温暖的开场问候（15到45字），结合当天节日、天气、星期来写，不要死板"),
+    "ending": ("结束语", "一句自然收尾的话（15到45字），结合当天节日、天气来写，不要说'播报结束'这类干巴巴的收尾词"),
+    "tip": ("小贴士", "一条贴合当天情况的实用生活小贴士（15到45字），如雨天带伞、天冷加衣、节日祝福、健康提醒等"),
+}
+
+
+def weather_forecast():
+    """从 HA 拉天气实体预报（未来几天），返回 [{date, cond, temp}]；无天气实体/失败返回 []。"""
+    try:
+        states = _fetch_all_states()
+        if not states:
+            return []
+        ent = None
+        for eid, s in states.items():
+            if eid.startswith("weather."):
+                ent = s
+                break
+        if not ent:
+            return []
+        attr = ent.get("attributes") or {}
+        out = []
+        for f in (attr.get("forecast") or []):
+            d = (f.get("datetime") or "")[:10]
+            if not d:
+                continue
+            cond = WEATHER_CN.get(f.get("condition", ""), f.get("condition", ""))
+            temp = f.get("temperature")
+            out.append({"date": d, "cond": cond, "temp": temp})
+        return out
+    except Exception:
+        return []
+
+
+def generate_week(section, cfg):
+    """🤖 用大模型生成未来 7 天（今天起）的文案：问候语/结束语/小贴士。
+    输入每天的实际日期、星期、节日、周末、天气，避免千篇一律。
+    返回 {"ok": bool, "days": {"YYYY-MM-DD": text}, "error": str}。
+    days 可能不满 7 天——缺的日期播报时自动用默认文案。"""
+    if section not in SECTION_META:
+        return {"ok": False, "days": {}, "error": "section 必须是 greeting/ending/tip"}
+    name, req = SECTION_META[section]
+    llm = cfg.get("engine", {}).get("llm") or {}
+    base = (llm.get("base_url") or "").rstrip("/")
+    key = llm.get("api_key") or ""
+    if not base:
+        return {"ok": False, "days": {}, "error": "未配置大模型引擎（base_url）"}
+    try:
+        import re as _re
+        # 未来 7 天实际情况：日期 + 星期 + 节日 + 周末 + 天气
+        today = datetime.now().date()
+        weather = weather_forecast()
+        lines_ctx = []
+        for i in range(7):
+            d = today + timedelta(days=i)
+            parts = f"{d:%Y-%m-%d} {WEEKDAY_CN[d.weekday()]}"
+            fest = FESTIVALS.get(d.strftime("%m-%d"), "")
+            if fest:
+                parts += f"，是{fest}"
+            if d.weekday() >= 5:
+                parts += "，周末"
+            wf = next((w for w in weather if w["date"] == d.strftime("%Y-%m-%d")), None)
+            if wf:
+                parts += f"，天气{wf['cond']}"
+                if wf.get("temp") is not None:
+                    parts += f"，{wf['temp']}度左右"
+            lines_ctx.append(parts)
+
+        system = (
+            f"你是温暖亲切的家庭播报文案写手。请给未来 7 天各写{name}：{req}。\n"
+            "格式要求：每天一行，行首必须是 YYYY-MM-DD 日期加冒号，后面接文案。\n"
+            "只输出 7 行，不要任何解释、空行、编号或 Markdown。\n"
+            "口语化、适合语音朗读，不要表情符号、括号、引号、英文。"
+        )
+        user = "未来 7 天实际情况：\n" + "\n".join(lines_ctx) + "\n\n请按格式输出 7 行" + name + "。"
+        import urllib.request as _ur
+        url = base + "/v1/messages"
+        hdrs = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+        if key:
+            hdrs["x-api-key"] = key
+        body = json.dumps({
+            "model": llm.get("model", "claude-sonnet-4-5"),
+            "max_tokens": int(llm.get("max_tokens", 2000)),
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }).encode()
+        req = _ur.Request(url, data=body, headers=hdrs)
+        with _ur.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
+        if not text:
+            return {"ok": False, "days": {}, "error": "模型返回空文本（可能是 max_tokens 不够）"}
+
+        # 解析：每行 "YYYY-MM-DD：文案" → {date: text}
+        days = {}
+        for ln in text.splitlines():
+            m = _re.match(r"(\d{4}-\d{2}-\d{2})[\s:：、\-]+(.+)$", ln.strip())
+            if m:
+                t = m.group(2).strip().strip("，。.！! ")
+                if t:
+                    days[m.group(1)] = t
+        if not days:
+            return {"ok": False, "days": {}, "error": "没解析出任何日期文案"}
+        log(f"🤖 已生成一周{name}（{len(days)}天）")
+        return {"ok": True, "days": days, "error": ""}
+    except Exception as e:
+        log(f"⚠️ 生成一周{name}失败: {e}")
+        return {"ok": False, "days": {}, "error": str(e)}
 
 
 def ensure_button_entity():
@@ -538,7 +662,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/tpl/greeting":
-            # 🤖 生成问候语：调 LLM 生成自然问候，存到 template_settings.greeting_generated
+            # 🤖 生成问候语：调 LLM 生成自然问候，存到 template_settings.greeting_generated（旧版单条，保留兼容）
             try:
                 greeting = generate_greeting()
                 cfg = json.loads(ds.CONFIG_PATH.read_text()) if ds.CONFIG_PATH.exists() else {}
@@ -547,6 +671,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": True, "greeting": greeting}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/tpl/week":
+            # 🤖 大模型生成未来 7 天文案（问候语/结束语/小贴士），存入 template_settings.<section>_days
+            try:
+                data = json.loads(self._body() or b"{}")
+                section = (data.get("section") or "").strip()
+                res = generate_week(section, ds.load_config())
+                if res.get("ok") and res.get("days"):
+                    cfg = json.loads(ds.CONFIG_PATH.read_text()) if ds.CONFIG_PATH.exists() else {}
+                    cfg.setdefault("template_settings", {})[section + "_days"] = res["days"]
+                    save_edit_cfg({"template_settings": cfg["template_settings"]})
+                self._send(200, json.dumps(res, ensure_ascii=False), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "days": {}, "error": str(e)}), "application/json")
         elif path == "/logs/clear":
             LOG_TAIL.clear()
             self._send(200, json.dumps({"ok": True}), "application/json")
@@ -565,10 +702,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 WEBUI_HTML = """<!DOCTYPE html>
-<html lang=\"zh-CN\">
+<html lang="zh-CN">
 <head>
-<meta charset=\"UTF-8\">
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>小爱每日播报</title>
 <style>
   :root{
@@ -576,7 +713,7 @@ WEBUI_HTML = """<!DOCTYPE html>
     --border:#30363d; --text:#c9d1d9; --title:#f0f6fc; --dim:#8b949e; --faint:#484f58;
     --accent:#1f6feb; --accent2:#58a6ff; --red:#f85149; --green:#3fb950;
   }
-  body[data-theme=\"light\"]{
+  body[data-theme="light"]{
     --bg:#ffffff; --bg2:#f6f8fa; --bg3:#f6f8fa; --bg-inset:#ffffff;
     --border:#d0d7de; --text:#24292f; --title:#1f2328; --dim:#57606a; --faint:#8b949e;
     --accent:#0969da; --accent2:#0969da; --red:#cf222e; --green:#1a7f37;
@@ -607,7 +744,7 @@ WEBUI_HTML = """<!DOCTYPE html>
   .add{background:transparent;border:1px dashed var(--border);color:var(--accent2);padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
   .search-row{margin:8px 0}
   .search-row input,.search-row select{width:98%;box-sizing:border-box;padding:8px 10px;height:36px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:none;font-size:14px}
-  .search-row select{appearance:none;-webkit-appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 12px center;padding-right:28px}
+  .search-row select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:28px}
   .search-row input:focus{border-color:var(--accent);outline:none}
   #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
   #status{font-size:12px;color:var(--dim)}
@@ -637,89 +774,89 @@ WEBUI_HTML = """<!DOCTYPE html>
   .hist-full-line{padding:6px 8px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset);font-size:13px;line-height:1.6}
 </style>
 </head>
-<body data-theme=\"dark\">
-<h1 style=\"display:flex;align-items:center;gap:8px\">🎙️ 小爱每日播报
-  <button class=\"ghost\" id=\"themeBtn\" onclick=\"toggleTheme()\" style=\"margin-left:auto;padding:6px 12px;font-size:12px\">☀️ 日间</button>
+<body data-theme="dark">
+<h1 style="display:flex;align-items:center;gap:8px">🎙️ 小爱每日播报
+  <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="margin-left:auto;padding:6px 12px;font-size:12px">☀️ 日间</button>
 </h1>
-<div class=\"tabs\">
-  <div class=\"tab on\" id=\"tabMain\" onclick=\"showPage('main')\">📢 播报</div>
-  <div class=\"tab\" id=\"tabCfg\" onclick=\"showPage('cfg')\">⚙️ 传感器配置</div>
-  <div class=\"tab\" id=\"tabTpl\" onclick=\"showPage('tpl')\">🧩 模板配置</div>
-  <div class=\"tab\" id=\"tabHist\" onclick=\"showPage('hist')\">📜 历史</div>
+<div class="tabs">
+  <div class="tab on" id="tabMain" onclick="showPage('main')">📢 播报</div>
+  <div class="tab" id="tabCfg" onclick="showPage('cfg')">⚙️ 传感器配置</div>
+  <div class="tab" id="tabTpl" onclick="showPage('tpl')">🧩 模板配置</div>
+  <div class="tab" id="tabHist" onclick="showPage('hist')">📜 历史</div>
 </div>
 
 <!-- 播报页 -->
-<div class=\"page on\" id=\"page-main\">
-  <div class=\"card\">
-    <div class=\"row\">
-      <select id=\"type\">
-        <option value=\"daily\">📅 日</option>
-        <option value=\"weekly\">🗓️ 周</option>
-        <option value=\"monthly\">📆 月</option>
-        <option value=\"yearly\">🎆 年</option>
+<div class="page on" id="page-main">
+  <div class="card">
+    <div class="row">
+      <select id="type">
+        <option value="daily">📅 日</option>
+        <option value="weekly">🗓️ 周</option>
+        <option value="monthly">📆 月</option>
+        <option value="yearly">🎆 年</option>
       </select>
-      <select id=\"engineSel\" onchange=\"changeEngine()\" title=\"生成引擎\">
-        <option value=\"template\">🧩 模板</option>
-        <option value=\"llm\">🤖 大模型</option>
+      <select id="engineSel" onchange="changeEngine()" title="生成引擎">
+        <option value="template">🧩 模板</option>
+        <option value="llm">🤖 大模型</option>
       </select>
-      <button id=\"btnSpeak\" onclick=\"trigger(false)\">📢 语音播报</button>
-      <button id=\"btnText\" onclick=\"trigger(true)\">📝 文字播报</button>
-      <button id=\"btnClear\" onclick=\"clearLog()\">🗑️ 清空日志</button>
-      <button id=\"btnEntities\" onclick=\"showEntities()\">🔑 传感器实体</button>
+      <button id="btnSpeak" onclick="trigger(false)">📢 语音播报</button>
+      <button id="btnText" onclick="trigger(true)">📝 文字播报</button>
+      <button id="btnClear" onclick="clearLog()">🗑️ 清空日志</button>
+      <button id="btnEntities" onclick="showEntities()">🔑 传感器实体</button>
     </div>
-    <div id=\"status\">就绪</div>
+    <div id="status">就绪</div>
   </div>
-  <div class=\"card\" id=\"entitiesBox\" style=\"display:none\"></div>
-  <div class=\"card\" id=\"textCard\" style=\"display:none\">
-    <div class=\"sec-title\">📝 播报文字</div>
-    <div id=\"textOut\" style=\"font-size:14px;line-height:1.8;white-space:pre-wrap\"></div>
+  <div class="card" id="entitiesBox" style="display:none"></div>
+  <div class="card" id="textCard" style="display:none">
+    <div class="sec-title">📝 播报文字</div>
+    <div id="textOut" style="font-size:14px;line-height:1.8;white-space:pre-wrap"></div>
   </div>
-  <div class=\"card\">
-    <div id=\"log\">日志加载中...</div>
+  <div class="card">
+    <div id="log">日志加载中...</div>
   </div>
 </div>
 
 <!-- 传感器配置页 -->
-<div class=\"page\" id=\"page-cfg\">
-  <div class=\"card\">
-    <div class=\"sec-title\">🎙️ 播报音箱</div>
-    <div class=\"sec-desc\">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
-    <div class=\"search-row\">
-      <select id=\"cfg-speaker\"></select>
+<div class="page" id="page-cfg">
+  <div class="card">
+    <div class="sec-title">🎙️ 播报音箱</div>
+    <div class="sec-desc">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
+    <div class="search-row">
+      <select id="cfg-speaker"></select>
     </div>
   </div>
-  <div class=\"card\">
-    <div class=\"sec-title\">🔧 实体映射</div>
-    <div class=\"sec-desc\">从下拉选择你家的传感器实体，填房间名。保存后生效。</div>
-    <div id=\"sections\"></div>
-    <button onclick=\"saveCfg()\" style=\"margin-top:12px;width:100%\">💾 保存配置</button>
-    <div class=\"save-status\" id=\"cfgStatus\"></div>
+  <div class="card">
+    <div class="sec-title">🔧 实体映射</div>
+    <div class="sec-desc">从下拉选择你家的传感器实体，填房间名。保存后生效。</div>
+    <div id="sections"></div>
+    <button onclick="saveCfg()" style="margin-top:12px;width:100%">💾 保存配置</button>
+    <div class="save-status" id="cfgStatus"></div>
   </div>
 </div>
 
 <!-- 模板配置页 -->
-<div class=\"page\" id=\"page-tpl\">
-  <div class=\"card\">
-    <div class=\"sec-title\">🧩 模板播报配置</div>
-    <div class=\"sec-desc\">配置模板模式（规则模板）的播报参数：阈值、板块开关、文案等。改完点\"保存模板配置\"。</div>
-    <div id=\"tplBox\"></div>
-    <button onclick=\"saveTpl()\" style=\"margin-top:12px;width:100%\">💾 保存模板配置</button>
-    <div class=\"save-status\" id=\"tplStatus\"></div>
+<div class="page" id="page-tpl">
+  <div class="card">
+    <div class="sec-title">🧩 模板播报配置</div>
+    <div class="sec-desc">配置模板模式（规则模板）的播报参数：阈值、板块开关、文案等。改完点"保存模板配置"。</div>
+    <div id="tplBox"></div>
+    <button onclick="saveTpl()" style="margin-top:12px;width:100%">💾 保存模板配置</button>
+    <div class="save-status" id="tplStatus"></div>
   </div>
 </div>
 
 <!-- 历史页 -->
-<div class=\"page\" id=\"page-hist\">
-  <div class=\"card\">
-    <div class=\"row\" style=\"justify-content:center\">
-      <button class=\"ghost\" onclick=\"histNav(-1)\">‹</button>
-      <span id=\"histTitle\" style=\"font-size:15px;font-weight:600;min-width:120px;text-align:center\"></span>
-      <button class=\"ghost\" onclick=\"histNav(1)\">›</button>
+<div class="page" id="page-hist">
+  <div class="card">
+    <div class="row" style="justify-content:center">
+      <button class="ghost" onclick="histNav(-1)">‹</button>
+      <span id="histTitle" style="font-size:15px;font-weight:600;min-width:120px;text-align:center"></span>
+      <button class="ghost" onclick="histNav(1)">›</button>
     </div>
-    <div class=\"cal-grid\" id=\"histCal\"></div>
+    <div class="cal-grid" id="histCal"></div>
   </div>
-  <div class=\"card\">
-    <div id=\"histList\" style=\"font-size:12px;color:#8b949e\">选择日期查看播报记录</div>
+  <div class="card">
+    <div id="histList" style="font-size:12px;color:#8b949e">选择日期查看播报记录</div>
   </div>
 </div>
 
@@ -755,12 +892,12 @@ var SECTIONS=[
   {key:'humidity_sensors',title:'💧 湿度传感器',desc:'家里各房间湿度',domains:['sensor'],kw:['humidity','湿度','relative_humidity'],room:true},
   {key:'power_sensors',title:'⚡ 用电（今日电量）',desc:'用 *_power_cost_today 实体（今日累计 kWh）',domains:['sensor'],kw:['power_cost_today','今日电量','耗电'],room:true},
   {key:'power_now',title:'🔌 实时功率（可选）',desc:'用 *_electric_power 实体（单位 W，高功耗提醒）',domains:['sensor'],kw:['electric_power','power','功率'],room:true},
-  {key:'lights',title:'💡 灯光',desc:'家里灯，播报\"没关灯\"提醒',domains:['light'],room:true},
+  {key:'lights',title:'💡 灯光',desc:'家里灯，播报"没关灯"提醒',domains:['light'],room:true},
   {key:'doors',title:'🚪 门窗',desc:'on=开，播报安全巡检',domains:['binary_sensor'],kw:['contact','门','窗','magnet'],room:true},
   {key:'important_devices',title:'⚠️ 重要设备',desc:'空调/风扇等，离线3天内播报提醒',domains:['climate','fan','media_player','switch'],room:true},
 ];
 
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 var cfgDirty=false;  // 🔑 配置页是否有未保存修改
 function markDirty(){ cfgDirty=true; }
@@ -791,7 +928,7 @@ function optsFor(domain, cur){
     if(e.domain===domain || domain.indexOf(e.domain)>=0){
       var sel=(e.entity_id===cur)?' selected':'';
       var label=e.name?e.name+' ('+e.entity_id+')':e.entity_id;
-      h+='<option value=\"'+esc(e.entity_id)+'\"'+sel+'>'+esc(label)+'</option>';
+      h+='<option value="'+esc(e.entity_id)+'"'+sel+'>'+esc(label)+'</option>';
     }
   });
   return h;
@@ -804,12 +941,12 @@ function fillSpeakerSelect(cur){
   ENTITIES.forEach(function(e){
     if(e.domain==='notify') opts.push(e);
   });
-  if(!opts.length){ sel.innerHTML='<option value=\"\">(未找到 notify 实体)</option>'; return; }
-  var h='<option value=\"\">选择音箱...</option>';
+  if(!opts.length){ sel.innerHTML='<option value="">(未找到 notify 实体)</option>'; return; }
+  var h='<option value="">选择音箱...</option>';
   opts.forEach(function(e){
     var name=e.name?e.name+' ('+e.entity_id+')':e.entity_id;
     var selFlag=(e.entity_id===cur)?' selected':'';
-    h+='<option value=\"'+esc(e.entity_id)+'\"'+selFlag+'>'+esc(name)+'</option>';
+    h+='<option value="'+esc(e.entity_id)+'"'+selFlag+'>'+esc(name)+'</option>';
   });
   sel.innerHTML=h;
 }
@@ -876,10 +1013,10 @@ function renderSections(){
     var items=CONFIG[sec.key]||{};
     var entries=[];
     for(var k in items){ if(k!=='_note') entries.push([k,items[k]]); }
-    h+='<div class=\"sec-title\" style=\"margin-top:12px\">'+sec.title+'</div>';
-    h+='<div class=\"sec-desc\">'+sec.desc+'</div>';
-    h+='<div class=\"search-row\"><input type=\"text\" placeholder=\"🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）\" onfocus=\"onSearch(\\''+sec.key+'\\')\" oninput=\"onSearch(\\''+sec.key+'\\')\" id=\"search-'+sec.key+'\"></div>';
-    h+='<div id=\"sec-'+sec.key+'\">';
+    h+='<div class="sec-title" style="margin-top:12px">'+sec.title+'</div>';
+    h+='<div class="sec-desc">'+sec.desc+'</div>';
+    h+='<div class="search-row"><input type="text" placeholder="🔍 点一下显示全部，输入关键词过滤（如 卧室/温度）" onfocus="onSearch(\\''+sec.key+'\\')" oninput="onSearch(\\''+sec.key+'\\')" id="search-'+sec.key+'"></div>';
+    h+='<div id="sec-'+sec.key+'">';
     entries.forEach(function(pair){
       // 兼容旧值(字符串=房间名)和新值({room,usage})
       var v=pair[1];
@@ -889,8 +1026,8 @@ function renderSections(){
       h+=entryHTML(sec, pair[0], room, usage, ptype);
     });
     h+='</div>';
-    h+='<div id=\"cand-'+sec.key+'\"></div>';
-    h+='<button class=\"add\" onclick=\"addEntry(\\''+sec.key+'\\')\">+ 手动添加</button>';
+    h+='<div id="cand-'+sec.key+'"></div>';
+    h+='<button class="add" onclick="addEntry(\\''+sec.key+'\\')">+ 手动添加</button>';
   });
   el.innerHTML=h;
 }
@@ -917,14 +1054,14 @@ function onSearch(key){
     var hay=(e.entity_id+' '+(e.name||'')).toLowerCase();
     if(!q || hay.indexOf(q)>=0) matches.push(e);
   });
-  if(!matches.length){ box.innerHTML='<div style=\"color:#8b949e;font-size:12px;padding:6px 0\">无匹配实体</div>'; return; }
+  if(!matches.length){ box.innerHTML='<div style="color:#8b949e;font-size:12px;padding:6px 0">无匹配实体</div>'; return; }
   var total=matches.length;
-  var h='<div style=\"font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px\">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择，可滚动）</div>';
+  var h='<div style="font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择，可滚动）</div>';
   // 全部显示 + 限高可滚动（最多约 20 条可见，超出滚动查看）
-  h+='<div style=\"max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px\">';
+  h+='<div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px">';
   matches.forEach(function(e){
     var label=(e.name?e.name+' — ':'')+e.entity_id;
-    h+='<div style=\"padding:7px 10px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset,#0d1117);border:1px solid #30363d;cursor:pointer;font-size:12px\" onclick=\"pickCandidate(\\''+key+'\\',\\''+e.entity_id+'\\')\">🔗 '+esc(label)+'</div>';
+    h+='<div style="padding:7px 10px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset,#0d1117);border:1px solid #30363d;cursor:pointer;font-size:12px" onclick="pickCandidate(\\''+key+'\\',\\''+e.entity_id+'\\')">🔗 '+esc(label)+'</div>';
   });
   h+='</div>';
   box.innerHTML=h;
@@ -945,7 +1082,7 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
   var ph=sec.room?'房间名':'标签';
   // editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   var eidAttr = editable
-    ? 'placeholder=\"填实体 id\" oninput=\"manualEid(this,\\''+sec.key+'\\')\"'
+    ? 'placeholder="填实体 id" oninput="manualEid(this,\\''+sec.key+'\\')"'
     : 'readonly';
   var eidStyle = editable
     ? 'flex:1.4;min-width:180px;background:var(--bg-inset);border:1px solid var(--border);color:var(--text)'
@@ -956,9 +1093,9 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
     var opts=[['daily','日电量'],['accumulate','累计差值'],['integral','功率积分']];
     var ohtml='';
     opts.forEach(function(o){
-      ohtml+='<option value=\"'+o[0]+'\"'+(ptype===o[0]?' selected':'')+'>'+o[1]+'</option>';
+      ohtml+='<option value="'+o[0]+'"'+(ptype===o[0]?' selected':'')+'>'+o[1]+'</option>';
     });
-    typeSel='<select style=\"flex:1;min-width:120px;height:34px;padding:0 8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)\" onchange=\"onRoom(this,\\''+sec.key+'\\')\">'+ohtml+'</select>';
+    typeSel='<select style="flex:1;min-width:120px;height:34px;padding:0 8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)" onchange="onRoom(this,\\''+sec.key+'\\')">'+ohtml+'</select>';
   }
   // 🔑 实时状态：从 ENTITIES 找该实体的当前 state 显示（在用途前）
   var st='';
@@ -975,14 +1112,14 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
       else if(st==='unavailable'||st==='unknown') st='⚠️ 无';
     }
   }
-  var stateHtml='<span data-state-badge style=\"flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box\">'+(st?esc(st):'-')+'</span>';
-  return '<div class=\"entry\" data-raw=\"'+esc(eid)+'\">'
-    +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
+  var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:52px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st):'-')+'</span>';
+  return '<div class="entry" data-raw="'+esc(eid)+'">'
+    +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
-    +'<input type=\"text\" value=\"'+esc(usage||'')+'\" placeholder=\"用途\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
-    +'<input type=\"text\" value=\"'+esc(room||'')+'\" placeholder=\"'+ph+'\" oninput=\"onRoom(this,\\''+sec.key+'\\')\">'
+    +'<input type="text" value="'+esc(usage||'')+'" placeholder="用途" oninput="onRoom(this,\\''+sec.key+'\\')">'
+    +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="onRoom(this,\\''+sec.key+'\\')">'
     +typeSel
-    +'<button class=\"del\" onclick=\"delEntry(\\''+sec.key+'\\',this)\">✕</button>'
+    +'<button class="del" onclick="delEntry(\\''+sec.key+'\\',this)">✕</button>'
     +'</div>';
 }
 
@@ -1037,13 +1174,14 @@ document.addEventListener('click',function(ev){
 
 /* ─── 模板播报配置 ─── */
 var TPL_GROUPS=[
-  {title:'问候语',open:true,dualMode:true,modeKey:'greeting_mode',fields:[
+  {title:'问候语',open:true,dualMode:true,modeKey:'greeting_mode',weekKey:'greeting_days',fields:[
     {k:'workday_desc',label:'工作日描述',def:'工作日辛苦了',type:'text'},
     {k:'weekend_desc',label:'周末描述',def:'周末愉快',type:'text'},
   ]},
-  {title:'结束语',dualMode:true,modeKey:'ending_mode',fields:[
+  {title:'结束语',open:true,dualMode:true,modeKey:'ending_mode',weekKey:'ending_days',fields:[
     {k:'ending_text',label:'手动结束语（留空用默认）',def:'',type:'textarea'},
   ]},
+  {title:'小贴士',open:true,dualMode:true,modeKey:'tip_mode',weekKey:'tip_days',fields:[]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},
     {k:'temp_constant_diff',label:'恒温温差阈值(度)',def:1,type:'number'},
@@ -1054,8 +1192,8 @@ var TPL_GROUPS=[
     {k:'humidity_wet',label:'过湿阈值(%)',def:80,type:'number'},
   ]},
   {title:'用电',fields:[
-    {k:'power_show_threshold',label:'显示\"共X度\"阈值(kWh)',def:0.05,type:'number'},
-    {k:'power_save_threshold',label:'\"非常省电\"阈值(kWh)',def:0.1,type:'number'},
+    {k:'power_show_threshold',label:'显示"共X度"阈值(kWh)',def:0.05,type:'number'},
+    {k:'power_save_threshold',label:'"非常省电"阈值(kWh)',def:0.1,type:'number'},
     {k:'power_top_n',label:'排行条数',def:3,type:'number'},
     {k:'power_top_min',label:'排行最低门槛(kWh)',def:0.01,type:'number'},
     {k:'high_power_alert_w',label:'高功耗提醒阈值(W)',def:200,type:'number'},
@@ -1069,8 +1207,8 @@ var TPL_GROUPS=[
     {k:'pm25_good',label:'好阈值',def:10,type:'number'},
   ]},
   {title:'终端任务',fields:[
-    {k:'task_high',label:'\"效率很高\"阈值(个)',def:10,type:'number'},
-    {k:'task_mid',label:'\"进度不错\"阈值(个)',def:5,type:'number'},
+    {k:'task_high',label:'"效率很高"阈值(个)',def:10,type:'number'},
+    {k:'task_mid',label:'"进度不错"阈值(个)',def:5,type:'number'},
   ]},
   {title:'待办/备忘',fields:[
     {k:'todo_preview',label:'待办预览条数',def:5,type:'number'},
@@ -1097,7 +1235,7 @@ var TPL_GROUPS=[
   ]},
 ];
 function loadTplPage(){
-  // 🔑 打开模板配置页时读最新配置并渲染（加超时，避免一直\"加载中\"）
+  // 🔑 打开模板配置页时读最新配置并渲染（加超时，避免一直"加载中"）
   document.getElementById('tplStatus').textContent='加载中...';
   var timer=setTimeout(function(){
     document.getElementById('tplStatus').textContent='⚠️ 加载超时';
@@ -1126,19 +1264,19 @@ function renderTplCfg(){
     var open = (g.open || ts['_fold'+gi] === true || (ts['_fold'+gi]===undefined && gi<2));
     // 双模式开关（大模型生成 / 手动填写）
     var mode = g.dualMode ? (ts[g.modeKey]||'manual') : null;
-    h+='<div style=\"border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden\">';
-    h+='<div onclick=\"toggleTplFold('+gi+')\" style=\"padding:10px 12px;background:var(--bg-inset);cursor:pointer;display:flex;justify-content:space-between;align-items:center\">';
-    h+='<span style=\"font-weight:600;font-size:13px\">'+g.title+'</span><span>'+(open?'▾':'▸')+'</span></div>';
+    h+='<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">';
+    h+='<div onclick="toggleTplFold('+gi+')" style="padding:10px 12px;background:var(--bg-inset);cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
+    h+='<span style="font-weight:600;font-size:13px">'+g.title+'</span><span>'+(open?'▾':'▸')+'</span></div>';
     if(open){
-      h+='<div style=\"padding:12px\">';
+      h+='<div style="padding:12px">';
       // 双模式切换
       if(g.dualMode){
-        h+='<div style=\"display:flex;gap:6px;margin-bottom:10px\">';
-        h+='<button type=\"button\" class=\"'+(mode==='llm'?'btn-go':'ghost')+'\" style=\"flex:1;padding:7px\" onclick=\"setTplMode('+gi+',\\'llm\\')\">🤖 大模型生成</button>';
-        h+='<button type=\"button\" class=\"'+(mode!=='llm'?'btn-go':'ghost')+'\" style=\"flex:1;padding:7px\" onclick=\"setTplMode('+gi+',\\'manual\\')\">✍️ 手动填写</button>';
+        h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
+        h+='<button type="button" class="'+(mode==='llm'?'btn-go':'ghost')+'" style="flex:1;padding:7px" onclick="setTplMode('+gi+',\\'llm\\')">🤖 大模型生成</button>';
+        h+='<button type="button" class="'+(mode!=='llm'?'btn-go':'ghost')+'" style="flex:1;padding:7px" onclick="setTplMode('+gi+',\\'manual\\')">✍️ 手动填写</button>';
         h+='</div>';
         if(mode==='llm'){
-          h+='<div style=\"font-size:11px;color:var(--accent2);margin-bottom:8px\">🤖 将用大模型自动生成'+g.title+'，保存后生效</div>';
+          h+='<div style="font-size:11px;color:var(--accent2);margin-bottom:8px">🤖 将用大模型生成未来7天'+g.title+'（结合节日/星期/天气），生成结果在下方，保存后生效</div>';
         }
       }
       g.fields.forEach(function(f){
@@ -1146,18 +1284,38 @@ function renderTplCfg(){
         if(f.k.indexOf('sec_')===0){ val=secs[f.k.slice(4)]!==false; }
         else{ val=(ts[f.k]!==undefined)?ts[f.k]:f.def; }
         if(f.type==='check'){
-          h+='<label class=\"eng-check\"><input type=\"checkbox\" data-tpl=\"'+f.k+'\" '+(val?'checked':'')+'> '+f.label+'</label>';
+          h+='<label class="eng-check"><input type="checkbox" data-tpl="'+f.k+'" '+(val?'checked':'')+'> '+f.label+'</label>';
         }else if(f.type==='number'){
-          h+='<label class=\"eng-label\">'+f.label+'</label>';
-          h+='<input class=\"eng-input\" type=\"number\" data-tpl=\"'+f.k+'\" value=\"'+esc(val)+'\">';
+          h+='<label class="eng-label">'+f.label+'</label>';
+          h+='<input class="eng-input" type="number" data-tpl="'+f.k+'" value="'+esc(val)+'">';
         }else if(f.type==='textarea'){
-          h+='<label class=\"eng-label\">'+f.label+'</label>';
-          h+='<textarea class=\"eng-input\" data-tpl=\"'+f.k+'\" style=\"min-height:50px\">'+esc(val)+'</textarea>';
+          h+='<label class="eng-label">'+f.label+'</label>';
+          h+='<textarea class="eng-input" data-tpl="'+f.k+'" style="min-height:50px">'+esc(val)+'</textarea>';
         }else{
-          h+='<label class=\"eng-label\">'+f.label+'</label>';
-          h+='<input class=\"eng-input\" type=\"text\" data-tpl=\"'+f.k+'\" value=\"'+esc(val)+'\">';
+          h+='<label class="eng-label">'+f.label+'</label>';
+          h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'">';
         }
       });
+      // 🔑 一周 7 天文案（问候语/结束语/小贴士）：大模型模式=生成按钮+只读预览；手动模式=7 个输入框
+      if(g.weekKey){
+        if(mode==='llm'){
+          h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:8px" onclick="genWeek('+gi+')">🤖 生成未来7天'+g.title+'</button>';
+        }
+        var days=ts[g.weekKey]||{};
+        var labels=weekLabels();
+        for(var wi=0; wi<7; wi++){
+          var w=labels[wi];
+          var val=days[w.ds]||'';
+          h+='<div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">';
+          h+='<div style="flex:0 0 100px;font-size:11px;color:var(--dim)">'+w.lbl+'</div>';
+          if(mode==='llm'){
+            h+='<div style="flex:1;font-size:12px;color:var(--accent2);border:1px solid var(--border);border-radius:6px;padding:7px 8px;background:var(--bg-inset)">'+esc(val||'（留空=播报时用默认）')+'</div>';
+          }else{
+            h+='<input class="eng-input" type="text" data-week="'+g.weekKey+'" data-date="'+w.ds+'" value="'+esc(val)+'" placeholder="留空=播报时用默认" style="flex:1;min-width:0">';
+          }
+          h+='</div>';
+        }
+      }
       h+='</div>';
     }
     h+='</div>';
@@ -1179,20 +1337,45 @@ function setTplMode(gi,mode){
   ts[g.modeKey]=mode;
   CONFIG.template_settings=ts;
   markDirty();
-  // 问候语选\"大模型生成\"时，立即生成并存
-  if(g.modeKey==='greeting_mode' && mode==='llm'){
-    document.getElementById('tplStatus').textContent='🤖 正在生成问候语...';
-    fetch(BASE+'tpl/greeting',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-      if(d.ok && d.greeting){
-        ts.greeting_generated=d.greeting;
-        CONFIG.template_settings=ts;
-        document.getElementById('tplStatus').textContent='✅ 已生成问候语：'+d.greeting;
-      }else{
-        document.getElementById('tplStatus').textContent='❌ 生成失败：'+(d.error||'');
-      }
-    }).catch(function(){document.getElementById('tplStatus').textContent='❌ 生成失败';});
-  }
   renderTplCfg();
+  // 🔑 双模式组切到"大模型生成"：立即生成未来7天文案（问候语/结束语/小贴士），显示在下方
+  if(mode==='llm' && g.weekKey){
+    genWeek(gi);
+  }
+}
+// 未来 7 天（从今天起）的日期 + 中文标签
+function weekLabels(){
+  var wd=['周日','周一','周二','周三','周四','周五','周六'];
+  var out=[];
+  for(var i=0;i<7;i++){
+    var d=new Date(); d.setDate(d.getDate()+i);
+    var ds=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    var lbl=(i===0?'今天 ':(i===1?'明天 ':'') )+wd[d.getDay()]+' '+(d.getMonth()+1)+'月'+d.getDate()+'日';
+    out.push({ds:ds,lbl:lbl});
+  }
+  return out;
+}
+// 🤖 调后端生成未来7天文案并存到 template_settings（问候语/结束语/小贴士）
+function genWeek(gi){
+  var g=TPL_GROUPS[gi];
+  var secName=g.weekKey.replace('_days','');
+  var statusEl=document.getElementById('tplStatus');
+  statusEl.textContent='🤖 正在生成未来7天'+g.title+'（约30秒）...';
+  fetch(BASE+'tpl/week',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:secName})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok && d.days){
+        var ts=CONFIG.template_settings||{};
+        ts[g.weekKey]=d.days;
+        CONFIG.template_settings=ts;
+        markDirty();
+        renderTplCfg();
+        statusEl.textContent='✅ 已生成未来7天'+g.title;
+      }else{
+        statusEl.textContent='❌ 生成失败：'+(d.error||'未知错误');
+      }
+    })
+    .catch(function(){statusEl.textContent='❌ 生成失败（网络或超时）';});
 }
 function saveTpl(){
   // 🔑 收集模板配置并保存
@@ -1205,6 +1388,14 @@ function saveTpl(){
       if(el.type==='checkbox'){ if(k.indexOf('sec_')===0) secs[k.slice(4)]=el.checked; else ts[k]=el.checked; }
       else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
       else{ ts[k]=el.value; }
+    });
+    // 🔑 一周 7 天文案（问候语/结束语/小贴士）：收集手动填写，空=删该天（播报时用默认）
+    box.querySelectorAll('[data-week]').forEach(function(el){
+      var wk=el.getAttribute('data-week');
+      var dt=el.getAttribute('data-date');
+      var v=(el.value||'').trim();
+      if(!ts[wk]) ts[wk]={};
+      if(v) ts[wk][dt]=v; else delete ts[wk][dt];
     });
   }
   CONFIG.template_settings=ts;
@@ -1314,7 +1505,7 @@ var textStartTime=0;
 var pollTimer=null;
 function pollText(){
   if(pollTimer) clearTimeout(pollTimer);
-  // ⏱️ 超时保护：超过 180 秒还没生成完就提示，避免一直卡\"生成中\"
+  // ⏱️ 超时保护：超过 180 秒还没生成完就提示，避免一直卡"生成中"
   if(Date.now()-textStartTime > 180000){
     document.getElementById('textOut').textContent='⏱️ 生成超时，请查看日志';
     return;
@@ -1336,7 +1527,7 @@ function pollText(){
       document.getElementById('status').textContent='✅ 文字已生成';
     }
   }).catch(function(){
-    // 请求失败：重试而不是静默停（避免\"一直生成中\"）
+    // 请求失败：重试而不是静默停（避免"一直生成中"）
     pollTimer=setTimeout(pollText,1500);
   });
 }
@@ -1366,21 +1557,21 @@ function showEntities(){
   setActive('btnEntities');
   fetch(BASE+'entities/buttons?'+Date.now()).then(function(r){return r.json()}).then(function(list){
     var box=document.getElementById('entitiesBox');
-    if(!list || !list.length){ box.innerHTML='<div style=\"color:var(--dim)\">暂无播报按钮实体</div>'; return; }
+    if(!list || !list.length){ box.innerHTML='<div style="color:var(--dim)">暂无播报按钮实体</div>'; return; }
     var tb={'daily':'📅 日','weekly':'🗓️ 周','monthly':'📆 月','yearly':'🎆 年'};
-    var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">播报按钮实体（自动化里可引用，点复制）：</div>';
+    var h='<div style="font-size:12px;color:var(--dim);margin-bottom:8px">播报按钮实体（自动化里可引用，点复制）：</div>';
     list.forEach(function(b){
-      h+='<div style=\"padding:8px 10px;margin-bottom:6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer\" onclick=\"copyEntity(\\''+b.entity+'\\')\">'
-        +'<div style=\"font-weight:600\">'+(tb[b.type]||b.type)+' · '+esc(b.name)+'</div>'
-        +'<div style=\"font-size:11px;color:var(--accent2)\">'+esc(b.entity)+'</div>'
+      h+='<div style="padding:8px 10px;margin-bottom:6px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer" onclick="copyEntity(\\''+b.entity+'\\')">'
+        +'<div style="font-weight:600">'+(tb[b.type]||b.type)+' · '+esc(b.name)+'</div>'
+        +'<div style="font-size:11px;color:var(--accent2)">'+esc(b.entity)+'</div>'
         +'</div>';
     });
-    h+='<div style=\"font-size:11px;color:var(--dim);margin-top:4px\">自动化示例：服务 input_button.press → 目标 '+(list[0]?esc(list[0].entity):'')+'</div>';
+    h+='<div style="font-size:11px;color:var(--dim);margin-top:4px">自动化示例：服务 input_button.press → 目标 '+(list[0]?esc(list[0].entity):'')+'</div>';
     box.innerHTML=h;
     box.style.display='block';
   }).catch(function(){
     var box=document.getElementById('entitiesBox');
-    box.innerHTML='<div style=\"color:var(--red)\">加载实体失败</div>';
+    box.innerHTML='<div style="color:var(--red)">加载实体失败</div>';
     box.style.display='block';
   });
 }
@@ -1430,13 +1621,13 @@ function histRenderCal(){
   if(histSel && !histSel.startsWith(histFmt(y,m))) histSel='';
   document.getElementById('histTitle').textContent=y+'年'+(m+1)+'月';
   var h='';
-  ['日','一','二','三','四','五','六'].forEach(function(w){h+='<div class=\"cal-dow\">'+w+'</div>';});
-  for(var i=0;i<first;i++) h+='<div class=\"cal-cell empty\"></div>';
+  ['日','一','二','三','四','五','六'].forEach(function(w){h+='<div class="cal-dow">'+w+'</div>';});
+  for(var i=0;i<first;i++) h+='<div class="cal-cell empty"></div>';
   for(var d=1;d<=daysInMonth;d++){
     var ds=histFmt(y,m)+'-'+pad(d);
     var has=histDays[ds];
     var cls='cal-cell'+(has?' has':'')+(ds===todayStr?' today':'')+(ds===histSel?' selected':'');
-    h+='<div class=\"'+cls+'\" onclick=\"histPick(\\''+ds+'\\')\">'+d+(has?'<span class=\"dot\"></span>':'')+'</div>';
+    h+='<div class="'+cls+'" onclick="histPick(\\''+ds+'\\')">'+d+(has?'<span class="dot"></span>':'')+'</div>';
   }
   document.getElementById('histCal').innerHTML=h;
 }
@@ -1450,30 +1641,30 @@ function histPick(ds){
   histSel=ds;
   histRenderCal();
   var list=document.getElementById('histList');
-  list.innerHTML='<div style=\"color:var(--dim)\">加载中...</div>';
+  list.innerHTML='<div style="color:var(--dim)">加载中...</div>';
   fetch(BASE+'history/day?date='+ds+'&_='+Date.now()).then(function(r){return r.json()}).then(function(entries){
-    if(!entries.length){list.innerHTML='<div style=\"color:var(--dim)\">当天暂无播报</div>';return;}
+    if(!entries.length){list.innerHTML='<div style="color:var(--dim)">当天暂无播报</div>';return;}
     var tb={'daily':'日报','weekly':'周报','monthly':'月报','yearly':'年报'};
     var tc={'daily':'tb-daily','weekly':'tb-weekly','monthly':'tb-monthly','yearly':'tb-yearly'};
     // 统计各类型次数
     var typeOrder=['daily','weekly','monthly','yearly'];
     var cnt={daily:0,weekly:0,monthly:0,yearly:0};
     entries.forEach(function(e){cnt[e.type||'daily']=(cnt[e.type||'daily']||0)+1;});
-    var h='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">'+ds+' · '+entries.length+'次播报';
+    var h='<div style="font-size:12px;color:var(--dim);margin-bottom:8px">'+ds+' · '+entries.length+'次播报';
     typeOrder.forEach(function(t){
-      if(cnt[t]>0) h+=' <span class=\"type-badge '+tc[t]+'\">'+tb[t]+' '+cnt[t]+'</span>';
+      if(cnt[t]>0) h+=' <span class="type-badge '+tc[t]+'">'+tb[t]+' '+cnt[t]+'</span>';
     });
     h+='</div>';
     entries.forEach(function(e,i){
       var t=e.type||'daily';
-      h+='<div class=\"hist-entry\" onclick=\"histView(\\''+ds+'\\','+i+')\">';
-      h+='<div class=\"t\">'+e.ts+' <span class=\"type-badge '+tc[t]+'\">'+tb[t]+'</span></div>';
-      h+='<div class=\"x\">'+esc(e.text||'')+'</div>';
-      h+='<div class=\"b\">'+e.count+'句 ›</div>';
+      h+='<div class="hist-entry" onclick="histView(\\''+ds+'\\','+i+')">';
+      h+='<div class="t">'+e.ts+' <span class="type-badge '+tc[t]+'">'+tb[t]+'</span></div>';
+      h+='<div class="x">'+esc(e.text||'')+'</div>';
+      h+='<div class="b">'+e.count+'句 ›</div>';
       h+='</div>';
     });
     list.innerHTML=h;
-  }).catch(function(){list.innerHTML='<div style=\"color:var(--red)\">加载失败</div>';});
+  }).catch(function(){list.innerHTML='<div style="color:var(--red)">加载失败</div>';});
 }
 function histView(ds,idx){
   var list=document.getElementById('histList');
@@ -1483,9 +1674,9 @@ function histView(ds,idx){
     var tb={'daily':'日报','weekly':'周报','monthly':'月报','yearly':'年报'};
     var tc={'daily':'tb-daily','weekly':'tb-weekly','monthly':'tb-monthly','yearly':'tb-yearly'};
     var t=e.type||'daily';
-    var h='<button class=\"ghost\" onclick=\"histPick(\\''+ds+'\\')\" style=\"margin-bottom:10px;padding:6px 12px;font-size:12px\">← 返回</button>';
-    h+='<div style=\"font-size:12px;color:var(--dim);margin-bottom:8px\">'+ds+' '+e.ts+' · 完整内容 <span class=\"type-badge '+tc[t]+'\">'+tb[t]+'</span></div>';
-    all.forEach(function(s){ h+='<div class=\"hist-full-line\">'+esc(s.text||'')+'</div>'; });
+    var h='<button class="ghost" onclick="histPick(\\''+ds+'\\')" style="margin-bottom:10px;padding:6px 12px;font-size:12px">← 返回</button>';
+    h+='<div style="font-size:12px;color:var(--dim);margin-bottom:8px">'+ds+' '+e.ts+' · 完整内容 <span class="type-badge '+tc[t]+'">'+tb[t]+'</span></div>';
+    all.forEach(function(s){ h+='<div class="hist-full-line">'+esc(s.text||'')+'</div>'; });
     list.innerHTML=h;
   });
 }
