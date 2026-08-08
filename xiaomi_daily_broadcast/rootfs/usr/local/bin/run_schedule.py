@@ -602,6 +602,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class=\"tabs\">
   <div class=\"tab on\" id=\"tabMain\" onclick=\"showPage('main')\">📢 播报</div>
   <div class=\"tab\" id=\"tabCfg\" onclick=\"showPage('cfg')\">⚙️ 传感器配置</div>
+  <div class=\"tab\" id=\"tabTpl\" onclick=\"showPage('tpl')\">🧩 模板配置</div>
   <div class=\"tab\" id=\"tabHist\" onclick=\"showPage('hist')\">📜 历史</div>
 </div>
 
@@ -652,10 +653,16 @@ WEBUI_HTML = """<!DOCTYPE html>
     <button onclick=\"saveCfg()\" style=\"margin-top:12px;width:100%\">💾 保存配置</button>
     <div class=\"save-status\" id=\"cfgStatus\"></div>
   </div>
+</div>
+
+<!-- 模板配置页 -->
+<div class=\"page\" id=\"page-tpl\">
   <div class=\"card\">
-    <div class=\"sec-title\" style=\"cursor:pointer\" onclick=\"toggleTpl()\">⚙️ 模板播报配置 <span id=\"tplArrow\" style=\"font-size:10px\">▸</span></div>
-    <div class=\"sec-desc\">配置模板模式（规则模板）的播报参数：阈值、板块开关、文案等</div>
-    <div id=\"tplBox\" style=\"display:none;margin-top:8px\"></div>
+    <div class=\"sec-title\">🧩 模板播报配置</div>
+    <div class=\"sec-desc\">配置模板模式（规则模板）的播报参数：阈值、板块开关、文案等。改完点\"保存模板配置\"。</div>
+    <div id=\"tplBox\"></div>
+    <button onclick=\"saveTpl()\" style=\"margin-top:12px;width:100%\">💾 保存模板配置</button>
+    <div class=\"save-status\" id=\"tplStatus\"></div>
   </div>
 </div>
 
@@ -717,19 +724,22 @@ var cfgDirty=false;  // 🔑 配置页是否有未保存修改
 function markDirty(){ cfgDirty=true; }
 function showPage(p){
   // 🔑 从配置页切走时，若有未保存修改则提醒
-  if(cfgDirty && p!=='cfg'){
-    var ok=confirm('传感器配置有未保存的修改，要保存吗？');
+  if(cfgDirty && p!=='cfg' && p!=='tpl'){
+    var ok=confirm('配置有未保存的修改，要保存吗？');
     if(ok){ saveCfg(); }
     cfgDirty=false;
   }
   document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
   document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
+  document.getElementById('tabTpl').className='tab'+(p==='tpl'?' on':'');
   document.getElementById('tabHist').className='tab'+(p==='hist'?' on':'');
   document.getElementById('page-main').className='page'+(p==='main'?' on':'');
   document.getElementById('page-cfg').className='page'+(p==='cfg'?' on':'');
+  document.getElementById('page-tpl').className='page'+(p==='tpl'?' on':'');
   document.getElementById('page-hist').className='page'+(p==='hist'?' on':'');
   if(p==='cfg'){ loadCfgPage(); }
   else { stopStatePoll(); }
+  if(p==='tpl'){ loadTplPage(); }
   if(p==='hist'){ loadHist(); }
 }
 
@@ -1041,12 +1051,14 @@ var TPL_GROUPS=[
     {k:'text_temp_prefix',label:'温度前缀',def:'今日温度：',type:'text'},
   ]},
 ];
-function toggleTpl(){
-  var box=document.getElementById('tplBox');
-  var on=box.style.display!=='block';
-  box.style.display=on?'block':'none';
-  document.getElementById('tplArrow').textContent=on?'▾':'▸';
-  if(on) renderTplCfg();
+function loadTplPage(){
+  // 🔑 打开模板配置页时读最新配置并渲染
+  document.getElementById('tplStatus').textContent='加载中...';
+  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+    CONFIG=d||{};
+    renderTplCfg();
+    document.getElementById('tplStatus').textContent='';
+  }).catch(function(){renderTplCfg();});
 }
 function renderTplCfg(){
   var ts=CONFIG.template_settings||{};
@@ -1070,25 +1082,34 @@ function renderTplCfg(){
       }
     });
   });
-  h+='<button class=\"ghost\" onclick=\"collectTplCfg()\" style=\"margin-top:8px;width:100%\">✔ 应用模板配置</button>';
   box.innerHTML=h;
   box.querySelectorAll('input').forEach(function(inp){
     inp.addEventListener('input',markDirty);
   });
 }
-function collectTplCfg(){
+function saveTpl(){
+  // 🔑 收集模板配置并保存
   var ts=CONFIG.template_settings||{};
   var secs=ts.sections||{};
   var box=document.getElementById('tplBox');
-  box.querySelectorAll('[data-tpl]').forEach(function(el){
-    var k=el.getAttribute('data-tpl');
-    if(el.type==='checkbox'){ if(k.indexOf('sec_')===0) secs[k.slice(4)]=el.checked; else ts[k]=el.checked; }
-    else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
-    else{ ts[k]=el.value; }
-  });
+  if(box){
+    box.querySelectorAll('[data-tpl]').forEach(function(el){
+      var k=el.getAttribute('data-tpl');
+      if(el.type==='checkbox'){ if(k.indexOf('sec_')===0) secs[k.slice(4)]=el.checked; else ts[k]=el.checked; }
+      else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
+      else{ ts[k]=el.value; }
+    });
+  }
   CONFIG.template_settings=ts;
   if(secs) ts.sections=secs;
-  markDirty();
+  document.getElementById('tplStatus').textContent='保存中...';
+  fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:{template_settings:ts}})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      document.getElementById('tplStatus').textContent = d.ok?'✅ 模板配置已保存':'❌ 保存失败';
+      if(d.ok) cfgDirty=false;
+    })
+    .catch(function(){document.getElementById('tplStatus').textContent='❌ 保存失败';});
 }
 // 手动条目实体 id 输入：同步更新 CONFIG（去掉空实体 id）
 function manualEid(el,key){
