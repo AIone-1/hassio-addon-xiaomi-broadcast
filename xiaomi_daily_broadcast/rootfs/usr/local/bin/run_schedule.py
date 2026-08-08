@@ -1073,6 +1073,8 @@ function loadTplPage(){
   });
 }
 function renderTplCfg(){
+  var box=document.getElementById('tplBox');
+  if(!box) return;
   var ts=CONFIG.template_settings||{};
   var secs=ts.sections||{};
   var h='';
