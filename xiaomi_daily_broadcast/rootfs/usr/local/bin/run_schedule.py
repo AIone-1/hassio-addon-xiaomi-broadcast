@@ -564,7 +564,7 @@ WEBUI_HTML = """<!DOCTYPE html>
   .sec-desc{font-size:11px;color:var(--dim);margin-bottom:10px}
   .add{background:transparent;border:1px dashed var(--border);color:var(--accent2);padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px}
   .search-row{margin:8px 0}
-  .search-row input{width:100%;padding:8px 10px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
+  .search-row input{width:98%;box-sizing:border-box;padding:8px 10px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .search-row input:focus{border-color:var(--accent);outline:none}
   #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
   #status{font-size:12px;color:var(--dim)}
@@ -641,7 +641,7 @@ WEBUI_HTML = """<!DOCTYPE html>
     <div class=\"sec-title\">🎙️ 播报音箱</div>
     <div class=\"sec-desc\">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
     <div class=\"row\">
-      <select id=\"cfg-speaker\" style=\"flex:1;max-width:360px\"></select>
+      <select id=\"cfg-speaker\" style=\"flex:1;width:100%;padding:10px 16px;font-size:14px;border-radius:8px\"></select>
     </div>
   </div>
   <div class=\"card\">
@@ -866,7 +866,7 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
     opts.forEach(function(o){
       ohtml+='<option value=\"'+o[0]+'\"'+(ptype===o[0]?' selected':'')+'>'+o[1]+'</option>';
     });
-    typeSel='<select style=\"flex:0 0 auto;padding:6px\" onchange=\"onRoom(this,\\''+sec.key+'\\')\">'+ohtml+'</select>';
+    typeSel='<select style=\"flex:1;min-width:120px;padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)\" onchange=\"onRoom(this,\\''+sec.key+'\\')\">'+ohtml+'</select>';
   }
   return '<div class=\"entry\" data-raw=\"'+esc(eid)+'\">'
     +'<input type=\"text\" value=\"'+esc(eid)+'\" '+eidAttr+' style=\"'+eidStyle+'\">'
