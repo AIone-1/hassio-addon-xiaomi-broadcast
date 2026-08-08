@@ -160,7 +160,7 @@ def _ws_connect():
 
 
 def stop_speaker(notify_entity):
-    """⏹ 停止音箱播放：暂停相关 media_player + notify 实体。"""
+    """⏹ 停止音箱播放：media_stop 所有小米音箱（含 x08a 等 Pro 系，之前 xiao_ai 匹配漏掉）。"""
     import websockets
     try:
         ws_url, token = _ws_connect()
@@ -169,20 +169,25 @@ def stop_speaker(notify_entity):
                 await ws.recv()
                 await ws.send(json.dumps({"type": "auth", "access_token": token}))
                 await ws.recv()
-                # 找到该 notify 对应的 media_player（实体 id 含音箱标识）
+                # 找到所有小米音箱 media_player（xiao_ai / x08a / xiaomi_x 都匹配）
                 await ws.send(json.dumps({"type": "get_states", "id": 1}))
                 r = json.loads(await ws.recv())
                 mp_targets = []
                 for s in r.get("result", []):
                     eid = s.get("entity_id", "")
-                    if eid.startswith("media_player.") and "xiao_ai" in eid:
+                    low = eid.lower()
+                    if eid.startswith("media_player.") and ("xiao_ai" in low or "x08a" in low or "xiaomi" in low):
                         mp_targets.append(eid)
-                # 暂停所有小米音箱
+                log(f"⏹ 停止音箱: {mp_targets}")
+                # 用 media_stop（比 pause 强，能停 TTS）
                 for eid in mp_targets:
-                    await ws.send(json.dumps({"type": "call_service", "domain": "media_player",
-                                              "service": "media_pause",
-                                              "service_data": {"entity_id": eid}, "id": 10}))
-                    await ws.recv()
+                    try:
+                        await ws.send(json.dumps({"type": "call_service", "domain": "media_player",
+                                                  "service": "media_stop",
+                                                  "service_data": {"entity_id": eid}, "id": 10}))
+                        await ws.recv()
+                    except Exception:
+                        pass
         asyncio.run(_stop())
     except Exception as e:
         log(f"⚠️ 停止音箱失败: {e}")

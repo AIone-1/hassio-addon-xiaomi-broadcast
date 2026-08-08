@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.36 (2026-08-08)
+
+- ⏹ 修复停止不生效：①停音箱改用 media_stop（比 media_pause 强，能停 TTS）；②匹配所有小米音箱 media_player（含 Pro 系 x08a，之前只匹配 xiao_ai 漏掉 Pro8）
+
 ## 1.1.35 (2026-08-07)
 
 - ⏹ 新增停止播报：前端"⏹ 停止"按钮 → /stop API 暂停音箱 + 清状态 + 释放锁
