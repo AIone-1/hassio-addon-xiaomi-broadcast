@@ -1420,6 +1420,15 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         total_kwh = sum(device_energy.values())
         print(f"  ⚡ 今日电量明细: {json.dumps(device_energy, ensure_ascii=False)}")
 
+        # 🔑 统计"读不到的用电设备"（unavailable/unknown 被跳过 → 总量偏小）——提示用户，避免"不准还不自知"
+        unread = []
+        for _eid, _meta in (config.get("power_sensors") or {}).items():
+            if _eid.startswith("_"):
+                continue
+            _label = _meta.get("room", "") if isinstance(_meta, dict) else _meta
+            if _label and _label not in device_energy:
+                unread.append(_label)
+
         power_line = ""
         if ts_on(config, "power") and device_energy:
             top_n = ts(config, "power_top_n", 3)
@@ -1432,9 +1441,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 power_line = f"今日用电共{total_kwh:.1f}度"
                 if top3:
                     top_parts = [f"{n}耗电{k:.1f}度" for n, k in top3]
-                    power_line += "，排名前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(top_parts)
+                    power_line += "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(top_parts)
             elif total_kwh > 0:
                 power_line = f"今日用电不到{min(0.1, save_th):.1f}度，非常省电"
+            # 读不到的用电设备提示（总量可能偏小）
+            if unread:
+                power_line += f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
 
             # 高功耗提醒用实时功率传感器（electric_power）
             high_alert = config.get("high_power_alert_w", 200)
