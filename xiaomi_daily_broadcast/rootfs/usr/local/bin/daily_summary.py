@@ -356,6 +356,7 @@ def apply_section_filters(report, config):
         "power": "power", "security": "security", "pm25": "pm25",
         "lights_on": "lights", "tasks_done": "task", "todos": "todo", "memos": "todo",
         "faults": "fault", "tip": "tip", "encouragement_options": "enc",
+        "power_now": "power_now",
     }
     for field, sec in _map.items():
         if not ts_on(config, sec):
@@ -914,7 +915,7 @@ def generate_with_llm(report, config):
         req_lines = [
             "1. 语气像家人朋友闲聊，自然亲切，不要说\"数据如下\"\"第一点\"这类书面语，不要念报告",
             "2. 开头按时间段问候一次（如\"中午好\"\"下午好\"），**整篇播报中问候语只能出现一次**，绝对不要重复出现\"中午好\"\"下午好\"等",
-            "3. 然后自然带出温度、湿度、用电、安全、空气质量、灯光的情况",
+            "3. 然后自然带出温度、湿度、耗电量、实时功率、安全、空气质量、灯光的情况",
             "4. 异常情况（温度偏高、门窗开着、灯还亮着、用电偏高、设备离线）必须自然提醒并给建议",
             "5. 倒数第二句给一句温暖的鼓励语（可参考数据里的鼓励语素材），最后一句固定说播报结束",
             "6. 全文120到220字，分成5到9句，每句独立成行，句号结尾，不要多余空行",
@@ -1367,14 +1368,14 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             "time": {"weekday": weekday_names[wd], "period": period, "is_weekend": wd >= 5},
             "temperature": [], "temp_alerts": [],
             "humidity_dry": [], "humidity_wet": [],
-            "power": {}, "security": {},
+            "power": {}, "power_now": {}, "security": {},
             "pm25": None, "lights_on": [],
             "tasks_done": 0, "todos": [], "memos": [],
             "faults": [], "tip": "",
         }
 
         # ─────────────────────────────────────────
-        # 1. 🏠 温度 + 湿度（合并为一条）
+        # 1. 🌡️ 温度（单独一条）
         # ─────────────────────────────────────────
         temp_parts = []
         temp_alerts = []
@@ -1400,8 +1401,17 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if cur > temp_high and not (excl_balcony and "阳台" in room):
                     temp_alerts.append(f"{room} {cur:.0f}度偏高")
                 report["temperature"].append(entry)
+        report["temp_alerts"] = temp_alerts
 
-        hum_parts = []
+        if temp_parts:
+            temp_line = ts(config, "text_temp_prefix", "今日温度：") + "，".join(temp_parts)
+            if temp_alerts:
+                temp_line += "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
+            lines.append(temp_line + "。")
+
+        # 2. 💧 湿度（单独一条）
+        # ─────────────────────────────────────────
+        hum_line = ""
         if ts_on(config, "humidity"):
             hums = {}
             for eid, room in config["humidity_sensors"].items():
@@ -1412,23 +1422,20 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             wet_th = ts(config, "humidity_wet", 80)
             dry = [r for r, h in hums.items() if h < dry_th]
             wet = [r for r, h in hums.items() if h > wet_th]
-            if dry:
-                hum_parts.append(f"{'、'.join(dry)}比较干燥，可以开加湿器")
-            if wet:
-                hum_parts.append(f"{'、'.join(wet)}湿度偏高，注意通风除湿")
             report["humidity_dry"] = dry
             report["humidity_wet"] = wet
-        report["temp_alerts"] = temp_alerts
-
-        temp_hum = ""
-        if temp_parts:
-            temp_hum = ts(config, "text_temp_prefix", "今日温度：") + "，".join(temp_parts)
-        if temp_alerts:
-            temp_hum += "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
-        if hum_parts:
-            temp_hum += "，" + "，".join(hum_parts)
-        if temp_hum:
-            lines.append(temp_hum + "。")
+            if hums:
+                # 播报每个房间湿度值，如"今日湿度：客厅50%，卧室45%"
+                hum_parts = [f"{r}{h:.0f}%" for r, h in hums.items()]
+                hum_line = "今日湿度：" + "，".join(hum_parts)
+                if dry:
+                    hum_line += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
+                if wet:
+                    hum_line += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+            elif dry or wet:
+                hum_line = "，" + "，".join((["、".join(dry) + "比较干燥"] if dry else []) + (["、".join(wet) + "湿度偏高"] if wet else []))
+            if hum_line:
+                lines.append(hum_line + "。")
 
         # ─────────────────────────────────────────
         # 2. ⚡ 用电（直接读今日电量，不推断）
@@ -1455,35 +1462,53 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             ranked = sorted(device_energy.items(), key=lambda x: -x[1])
             top3 = [(n, k) for n, k in ranked[:top_n] if k > top_min]
             if total_kwh > show_th:
-                power_line = f"今日用电共{total_kwh:.1f}度"
+                power_line = f"今日耗电量共{total_kwh:.1f}度"
                 if top3:
                     top_parts = [f"{n}耗电{k:.1f}度" for n, k in top3]
                     power_line += "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(top_parts)
             elif total_kwh > 0:
-                power_line = f"今日用电不到{min(0.1, save_th):.1f}度，非常省电"
+                power_line = f"今日耗电量不到{min(0.1, save_th):.1f}度，非常省电"
             # 读不到的用电设备提示（总量可能偏小）
             if unread:
                 power_line += f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
-
-            # 高功耗提醒用实时功率传感器（electric_power）
-            high_alert = config.get("high_power_alert_w", 200)
-            high_devices = []
-            for eid, label in config.get("power_now", {}).items():
-                v = get_float(states, eid)
-                if v is not None and v > high_alert:
-                    high_devices.append((label, v))
-            if high_devices:
-                hp = [f"{n} {p:.0f}瓦" for n, p in high_devices]
-                power_line += "，提醒：" + "，".join(hp) + "当前功耗较高，不用时可以关掉"
             report["power"] = {
                 "total_kwh": round(total_kwh, 2),
                 "top3": [[n, round(k, 2)] for n, k in top3] if top3 else [],
-                "high_power": [[n, p] for n, p in high_devices] if high_devices else [],
             }
         else:
             report["power"] = {}
         if power_line:
             lines.append(power_line + "。")
+
+        # ─────────────────────────────────────────
+        # 2.5 ⚡ 实时功率（独立一条 + 独立板块开关 power_now）
+        # ─────────────────────────────────────────
+        power_now_line = ""
+        if ts_on(config, "power_now"):
+            now_parts = []
+            for eid, meta in config.get("power_now", {}).items():
+                if eid.startswith("_"):
+                    continue
+                v = get_float(states, eid)
+                if v is not None and v > 0:
+                    # 🔑 标签以数字结尾（"卧室电源1"）紧接数值会连读，用空格隔开
+                    now_parts.append(f"{_power_label(eid, meta)} {v:.0f}瓦")
+            high_alert = config.get("high_power_alert_w", 200)
+            high_devices = []
+            for eid, meta in config.get("power_now", {}).items():
+                if eid.startswith("_"):
+                    continue
+                v = get_float(states, eid)
+                if v is not None and v > high_alert:
+                    high_devices.append((_power_label(eid, meta), v))
+            if now_parts:
+                power_now_line = "当前实时功率：" + "，".join(now_parts)
+                if high_devices:
+                    hp = [f"{n} {p:.0f}瓦" for n, p in high_devices]
+                    power_now_line += "，注意：" + "、".join(hp) + "功率较高，不用时可以关掉"
+            report["power_now"] = {"now": [[n, p] for n, p in high_devices] if high_devices else []}
+        if power_now_line:
+            lines.append(power_now_line + "。")
 
         # ─────────────────────────────────────────
         # 3. 🔒 安全巡检（门窗+钥匙+盖子合并为一条）
