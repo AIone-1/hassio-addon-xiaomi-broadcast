@@ -232,6 +232,7 @@ SECTION_META = {
     "greeting": ("问候语", "一句自然温暖的开场问候（15到45字），结合当天节日、天气、星期来写，不要死板"),
     "ending": ("结束语", "一句自然收尾的话（15到45字），结合当天节日、天气来写，不要说'播报结束'这类干巴巴的收尾词"),
     "tip": ("小贴士", "一条贴合当天情况的实用生活小贴士（15到45字），如雨天带伞、天冷加衣、节日祝福、健康提醒等"),
+    "enc": ("鼓励语", "一句温暖鼓励的话（15到45字），结合当天节日、天气来写，如周末放松、新的一周加油等"),
 }
 
 
@@ -351,7 +352,7 @@ def generate_one(section, cfg, date_str):
 
 
 # 大模型文案自动更新：开自动更新=每天零点刷新当天；关=每 7 天（窗口滚出当天）更新一回
-LLM_SECTIONS = ("greeting", "ending", "tip")
+LLM_SECTIONS = ("greeting", "ending", "tip", "enc")
 
 def llm_auto_refresh():
     """按配置刷新大模型生成的文案（greeting/ending/tip 的 <x>_llm_days）。
@@ -1261,6 +1262,7 @@ var TPL_GROUPS=[
       {k:'ending_text',label:'默认结束语（留空用按时间段的默认）',def:'',type:'textarea'},
     ]},
     {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',llmWeekKey:'tip_llm_days',loopKey:'tip_loop_enabled',help:'手动和大模型内容各自独立，互不覆盖。留空的天播报时用默认小贴士。',defFields:[]},
+    {name:'鼓励语',modeKey:'enc_mode',weekKey:'enc_days',llmWeekKey:'enc_llm_days',loopKey:'enc_loop_enabled',help:'说在小贴士之后、结束语/播报结束之前（倒数第2句）。留空的天播报时用默认鼓励语。',defFields:[]},
   ]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},

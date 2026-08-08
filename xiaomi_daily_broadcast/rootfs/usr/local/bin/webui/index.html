@@ -501,6 +501,7 @@ var TPL_GROUPS=[
       {k:'ending_text',label:'默认结束语（留空用按时间段的默认）',def:'',type:'textarea'},
     ]},
     {name:'小贴士',modeKey:'tip_mode',weekKey:'tip_days',llmWeekKey:'tip_llm_days',loopKey:'tip_loop_enabled',help:'手动和大模型内容各自独立，互不覆盖。留空的天播报时用默认小贴士。',defFields:[]},
+    {name:'鼓励语',modeKey:'enc_mode',weekKey:'enc_days',llmWeekKey:'enc_llm_days',loopKey:'enc_loop_enabled',help:'说在小贴士之后、结束语/播报结束之前（倒数第2句）。留空的天播报时用默认鼓励语。',defFields:[]},
   ]},
   {title:'温度',fields:[
     {k:'temp_high_alert',label:'高温报警阈值(度)',def:32,type:'number'},

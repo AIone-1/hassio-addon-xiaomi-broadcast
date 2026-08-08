@@ -351,7 +351,7 @@ def apply_section_filters(report, config):
         "temperature": "temp", "temp_alerts": "temp", "humidity_dry": "humidity", "humidity_wet": "humidity",
         "power": "power", "security": "security", "pm25": "pm25",
         "lights_on": "lights", "tasks_done": "task", "todos": "todo", "memos": "todo",
-        "faults": "fault", "tip": "tip",
+        "faults": "fault", "tip": "tip", "encouragement_options": "enc",
     }
     for field, sec in _map.items():
         if not ts_on(config, sec):
@@ -1623,19 +1623,10 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             report["faults"] = faults
 
         # ─────────────────────────────────────────
-        # 9. 💡 鼓励语 + 小贴士（两个独立开关：enc=鼓励语 / tip=小贴士）
+        # 9. 💡 小贴士（tip）→ 鼓励语（enc，倒数第2）→ 结束语（倒数第1）
         # ─────────────────────────────────────────
         h = now.hour
         seed = wd * 7 + now.day
-        # 鼓励语根据时间选：早上说早安、晚上说晚安。独立开关 sec_enc，不跟小贴士走
-        encouragement = pick_time(config.get("encouragements", []), h, seed)
-        if ts_on(config, "enc") and encouragement:
-            # 🐛 去掉鼓励语里的时间段问候前缀（"早上好/上午好/中午好/下午好/晚上好"），
-            # 避免和开头问候语重复（如"下午好...下午好！坚持住"）
-            import re as _re
-            encouragement = _re.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', encouragement)
-            if encouragement:
-                lines.append(encouragement)
         # 小贴士：优先用当天配置的（手动/大模型一周缓存），否则按时间段从库选
         tip = week_day_text(config, "tip", now.strftime("%Y-%m-%d"))
         if not tip:
@@ -1648,6 +1639,17 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 lines.append(f"午后小提示：{tip}")
             else:
                 lines.append(f"睡前小提示：{tip}")
+        # 鼓励语：优先用当天配置的（手动/大模型一周缓存），否则按时间段从库选。独立开关 sec_enc
+        encouragement = week_day_text(config, "enc", now.strftime("%Y-%m-%d"))
+        if not encouragement:
+            encouragement = pick_time(config.get("encouragements", []), h, seed)
+        if ts_on(config, "enc") and encouragement:
+            # 🐛 去掉鼓励语里的时间段问候前缀（"早上好/上午好/中午好/下午好/晚上好"），
+            # 避免和开头问候语重复（如"下午好...下午好！坚持住"）
+            import re as _re
+            encouragement = _re.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', encouragement)
+            if encouragement:
+                lines.append(encouragement)
 
         # 结束语：板块开关可关（sections.ending=false 不播结束语）；优先用当天配置的，否则按时间段默认
         if ts_on(config, "ending"):
@@ -1695,16 +1697,21 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if len(end_idx) > 1:
                     lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
                 # 鼓励语兜底：鼓励语开关(sec_enc)开着、且整个稿子都没出现过鼓励词才补，避免重复
-                enc = pick_time(config.get("encouragements", []), h, seed)
+                enc = week_day_text(config, "enc", now.strftime("%Y-%m-%d"))
+                if not enc:
+                    enc = pick_time(config.get("encouragements", []), h, seed)
                 enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好", "坚持")
-                # 🐛 如果稿子已有收尾句（"就到这里/播报结束"等），不补鼓励语——收尾后不该再有内容
-                _has_ending = any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束"))
-                if ts_on(config, "enc") and enc and not any(kw in "".join(lines) for kw in enc_words) and not _has_ending:
+                if ts_on(config, "enc") and enc and not any(kw in "".join(lines) for kw in enc_words):
                     # 🐛 同样去问候前缀，避免和 LLM 稿子的问候语重复
                     import re as _re2
                     enc = _re2.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', enc)
                     if enc:
-                        lines.append(enc)
+                        # 🔑 鼓励语永远在结束语（收尾句）之前：有收尾句插入其前，无收尾句追加末尾
+                        _end_pos = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
+                        if _end_pos:
+                            lines.insert(_end_pos[-1], enc)
+                        else:
+                            lines.append(enc)
                 # 结束语兜底：板块开关结束语开着、且整个稿子都没有收尾句才补（识别各种收尾形式，避免重复）
                 if ts_on(config, "ending") and not any(kw in "".join(lines) for kw in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
                     lines.append(build_ending(h))
@@ -1857,6 +1864,20 @@ async def run_period_summary(summary_type, now, ws, states, config,
             end_idx = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
             if len(end_idx) > 1:
                 lines = [l for i, l in enumerate(lines) if i not in end_idx[:-1]]
+            # 鼓励语兜底：周期稿缺鼓励词、enc 开 → 在收尾句前补（鼓励语永远在结束语前）
+            _penc = week_day_text(config, "enc", now.strftime("%Y-%m-%d"))
+            if not _penc:
+                _penc = pick_time(config.get("encouragements", []), now.hour, now.weekday() * 7 + now.day)
+            _enc_words = ("加油", "辛苦", "晚安", "好梦", "顺利", "感谢", "谢谢", "祝愿", "劳累", "努力", "休息", "美好", "坚持")
+            if ts_on(config, "enc") and _penc and not any(k in "".join(lines) for k in _enc_words):
+                import re as _re3
+                _penc = _re3.sub(r'^(凌晨好|早上好|上午好|中午好|下午好|晚上好)[！!，,。\s]*', '', _penc)
+                if _penc:
+                    _pe_pos = [i for i, l in enumerate(lines) if any(k in l for k in END_KW)]
+                    if _pe_pos:
+                        lines.insert(_pe_pos[-1], _penc)
+                    else:
+                        lines.append(_penc)
             # 结束语兜底：结束语开关开着、且整个稿子都没有收尾句才补
             if ts_on(config, "ending") and not any(k in "".join(lines) for k in ("播报结束", "播报完毕", "播报完成", "就到这里", "到此结束", "以上就是", "以上是", "本次播报", "结束")):
                 lines.append(build_ending(now.hour))
