@@ -1397,14 +1397,12 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # 构建播报内容
         # ═══════════════════════════════════════════
 
-        # 根据实际时间判断问候语（词可配置；greeting_mode=llm 用大模型生成的问候）
+        # 根据实际时间判断问候语（词可配置）
+        # 🐛 去掉旧的 greeting_generated（v1.1.53 单条遗留）——llm 模式的问候语来源是 greeting_llm_days（一周缓存）
+        # 时段词（早上好/中午好/晚上好）始终由当前时间决定，缓存内容只负责日期/天气/内容
         h = now.hour
         _gw = ts(config, "greeting_words", {})
-        _gmode = ts(config, "greeting_mode", "manual")
-        _gllm = ts(config, "greeting_generated", "")
-        if _gmode == "llm" and _gllm:
-            greeting = _gllm; period = "早上" if h < 12 else ("下午" if h < 18 else "晚上")
-        elif h < 6:
+        if h < 6:
             greeting = _gw.get("night", "凌晨好"); period = "凌晨"
         elif h < 9:
             greeting = _gw.get("morning", "早上好"); period = "早上"
