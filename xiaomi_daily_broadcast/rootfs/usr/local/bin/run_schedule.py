@@ -836,6 +836,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(res, ensure_ascii=False), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "days": {}, "error": str(e)}), "application/json")
+        elif path == "/tpl/one":
+            # ✨ 只生成某一天的文案（单条），存入 template_settings.<section>_llm_days 对应日期
+            try:
+                data = json.loads(self._body() or b"{}")
+                section = (data.get("section") or "").strip()
+                date_str = (data.get("date") or "").strip()
+                if not date_str:
+                    self._send(400, json.dumps({"ok": False, "days": {}, "error": "date 必填"}), "application/json")
+                    return
+                res = generate_one(section, ds.load_config(), date_str)
+                if res.get("ok") and res.get("days"):
+                    cfg = json.loads(ds.CONFIG_PATH.read_text()) if ds.CONFIG_PATH.exists() else {}
+                    key = section + "_llm_days"
+                    llm_days = cfg.setdefault("template_settings", {}).get(key) or {}
+                    llm_days.update(res["days"])
+                    cfg["template_settings"][key] = llm_days
+                    save_edit_cfg({"template_settings": cfg["template_settings"]})
+                self._send(200, json.dumps(res, ensure_ascii=False), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "days": {}, "error": str(e)}), "application/json")
         elif path == "/logs/clear":
             LOG_TAIL.clear()
             self._send(200, json.dumps({"ok": True}), "application/json")
@@ -953,6 +973,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 </h1>
 <div class="tabs">
   <div class="tab on" id="tabMain" onclick="showPage('main')">📢 播报</div>
+  <div class="tab" id="tabSec" onclick="showPage('sec')">📋 播报栏目</div>
   <div class="tab" id="tabCfg" onclick="showPage('cfg')">⚙️ 传感器配置</div>
   <div class="tab" id="tabTpl" onclick="showPage('tpl')">🧩 模板配置</div>
   <div class="tab" id="tabLlm" onclick="showPage('llm')">🤖 大模型配置</div>
@@ -980,15 +1001,6 @@ WEBUI_HTML = """<!DOCTYPE html>
     </div>
     <div id="status">就绪</div>
   </div>
-  <!-- 📋 播报栏目：哪些内容播报（大模型和模板都生效），改完自动保存 -->
-  <div class="card" id="sectionsCard">
-    <div class="sec-title-row">
-      <div class="sec-title">📋 播报栏目</div>
-      <span class="fmt-hint" style="margin:0">选哪些内容播报（模板/大模型都生效）</span>
-    </div>
-    <div id="mainSections" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:4px;margin-top:8px"></div>
-    <div class="save-status" id="secStatus"></div>
-  </div>
   <div class="card" id="entitiesBox" style="display:none"></div>
   <div class="card" id="textCard" style="display:none">
     <div class="sec-title">📝 播报文字</div>
@@ -997,6 +1009,16 @@ WEBUI_HTML = """<!DOCTYPE html>
   <div class="card">
     <div id="statsBar" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:12px"></div>
     <div id="log">日志加载中...</div>
+  </div>
+</div>
+
+<!-- 播报栏目页 -->
+<div class="page" id="page-sec">
+  <div class="card">
+    <div class="sec-title">📋 播报栏目</div>
+    <div class="sec-desc">选哪些内容播报（模板/大模型都生效），改完自动保存。</div>
+    <div id="mainSections" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:4px;margin-top:8px"></div>
+    <div class="save-status" id="secStatus"></div>
   </div>
 </div>
 
@@ -1149,17 +1171,20 @@ function showPage(p){
   }
   currentPage=p;
   document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
+  document.getElementById('tabSec').className='tab'+(p==='sec'?' on':'');
   document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
   document.getElementById('tabTpl').className='tab'+(p==='tpl'?' on':'');
   document.getElementById('tabLlm').className='tab'+(p==='llm'?' on':'');
   document.getElementById('tabHist').className='tab'+(p==='hist'?' on':'');
   document.getElementById('page-main').className='page'+(p==='main'?' on':'');
+  document.getElementById('page-sec').className='page'+(p==='sec'?' on':'');
   document.getElementById('page-cfg').className='page'+(p==='cfg'?' on':'');
   document.getElementById('page-tpl').className='page'+(p==='tpl'?' on':'');
   document.getElementById('page-llm').className='page'+(p==='llm'?' on':'');
   document.getElementById('page-hist').className='page'+(p==='hist'?' on':'');
   if(p==='cfg'){ loadCfgPage(); }
   else { stopStatePoll(); }
+  if(p==='sec'){ loadMainSections(); }
   if(p==='tpl'){ loadTplPage(); }
   if(p==='llm'){ loadLlmPage(); }
   if(p==='hist'){ loadHist(); }
@@ -1809,7 +1834,8 @@ function renderWeekPanel(ts){
     else if(autoMode===false) autoMode='weekly';
     else if(autoMode!=='daily' && autoMode!=='weekly' && autoMode!=='off') autoMode='weekly';
     h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">';
-    h+='<button type="button" class="btn-go" style="flex:1;padding:7px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
+    // 🔑 生成按钮去底色(ghost) + 更新下拉，各占一半（flex:1）比例协调
+    h+='<button type="button" class="ghost" style="flex:1;padding:7px;white-space:nowrap" onclick="genWeek('+active+')">🤖 生成7天'+g.name+'</button>';
     h+='<select data-tpl="'+autoKey+'" onchange="llmAutoMode(this,\\''+autoKey+'\\')" style="flex:1;padding:7px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);height:36px">'
       +'<option value="daily"'+(autoMode==='daily'?' selected':'')+'>每天更新</option>'
       +'<option value="weekly"'+(autoMode==='weekly'?' selected':'')+'>每7天更新</option>'
@@ -1833,6 +1859,8 @@ function renderWeekPanel(ts){
     h+='<div style="flex:0 0 88px;font-size:11px;color:var(--dim);white-space:nowrap">'+w.lbl+'</div>';
     if(mode==='llm'){
       h+='<div style="flex:1;font-size:12px;color:var(--accent2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--bg-inset);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(val)+'">'+esc(val||'（未生成）')+'</div>';
+      // 🔑 单条生成按钮：每个日期一个，点击只生成那一天
+      h+='<button type="button" class="ghost" style="flex:0 0 auto;padding:3px 8px;font-size:11px" onclick="genOne('+active+',\\''+w.ds+'\\')" title="只生成这一天">✨ 生成</button>';
     }else{
       h+='<input class="eng-input" type="text" data-week="'+g.weekKey+'" data-date="'+w.ds+'" value="'+esc(val)+'" placeholder="留空=用默认" oninput="weekInput(this,\\''+g.weekKey+'\\',\\''+w.ds+'\\')" style="flex:1;min-width:0">';
     }
@@ -1906,6 +1934,28 @@ function weekLabels(){
   return out;
 }
 // 🤖 调后端生成未来7天文案，存到大模型的独立存储（不影响手动填写的）
+// ✨ 单条生成：只生成某一天，存入 llm_days 对应日期
+function genOne(si,dateStr){
+  var g=TPL_GROUPS[0].groups[si];
+  var secName=g.llmWeekKey.replace('_llm_days','');
+  var statusEl=document.getElementById('tplStatus');
+  statusEl.textContent='✨ 正在生成 '+dateStr+' 的'+g.name+'...';
+  fetch(BASE+'tpl/one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:secName,date:dateStr})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok && d.days){
+        var ts=CONFIG.template_settings||{};
+        if(!ts[g.llmWeekKey]) ts[g.llmWeekKey]={};
+        for(var k in d.days) ts[g.llmWeekKey][k]=d.days[k];
+        CONFIG.template_settings=ts;
+        renderTplCfg();
+        statusEl.textContent='✅ 已生成 '+dateStr+' 的'+g.name;
+      }else{
+        statusEl.textContent='❌ 生成失败：'+(d.error||'未知错误');
+      }
+    })
+    .catch(function(){statusEl.textContent='❌ 生成失败（网络或超时）';});
+}
 function genWeek(si){
   var g=TPL_GROUPS[0].groups[si];
   var secName=g.llmWeekKey.replace('_llm_days','');
