@@ -1511,12 +1511,22 @@ function loadLlmPage(){
     renderLlmCfg();
   });
 }
+// 🔑 默认提示语示例（与后端默认一致，点"示例"按钮回填）
+var LLM_DEFAULT_DAILY = "你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，生成一段自然、亲切、口语化的中文播报稿。\\n要求：\\n1. 语气像家人朋友闲聊，自然亲切，不要说\\"数据如下\\"\\"第一点\\"这类书面语，不要念报告\\n2. 开头按时间段问候一次（如\\"中午好\\"\\"下午好\\"），**整篇播报中问候语只能出现一次**\\n3. 然后自然带出温度、湿度、耗电量、实时功率、安全、空气质量、灯光的情况\\n4. 异常情况（温度偏高、门窗开着、灯还亮着、用电偏高、设备离线）必须自然提醒并给建议\\n5. 倒数第二句给一句温暖的鼓励语，最后一句固定说播报结束\\n6. 全文120到220字，分成5到9句，每句独立成行，句号结尾\\n7. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\\n8. 适合语音朗读：不要括号、列表序号、表情符号、英文";
+var LLM_DEFAULT_PERIOD = "你是家里的小爱音箱播报助手。根据用户提供的周期汇总数据，生成一段自然、亲切、口语化的中文周期总结播报稿。\\n要求：\\n1. 开头用\\"这周/这个月/这一年家里……\\"的句式，明确这是周期总结，不是每日播报\\n2. 自然带出：温度均值与最热最冷、用电总量与日均及耗电排行、任务完成数、空气与灯光亮点、异常提醒\\n3. 数据里有 days_recorded 和 days_total，如果记录的日期少于总天数，必须诚实带过，不许假装完整\\n4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\\n5. 全文150到280字，分成6到12句，每句独立成行，句号结尾\\n6. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\\n7. 适合语音朗读：不要括号、列表序号、表情符号、英文";
+function fillLlmExample(){
+  document.getElementById('llm_daily_prompt').value=LLM_DEFAULT_DAILY;
+  document.getElementById('llm_period_prompt').value=LLM_DEFAULT_PERIOD;
+  document.getElementById('llmStatus').textContent='✅ 已填入示例提示语，点保存生效';
+  markDirty();
+}
 function renderLlmCfg(){
   var box=document.getElementById('llmBox');
   if(!box) return;
   var llm=((CONFIG.template_settings||{}).llm)||{};
   var h='';
   h+='<div class="sec-desc" style="margin-top:4px">提示语是告诉大模型怎么组织播报的指令。可微调语气/结构，留空用默认。</div>';
+  h+='<div style="margin-bottom:10px"><button type="button" class="btn-go" onclick="fillLlmExample()" style="padding:6px 14px">📋 填入示例提示语</button><span class="fmt-hint" style="margin-left:8px">点这个自动填入默认示例，改坏了可一键回退</span></div>';
   h+='<label class="eng-label">每日播报提示语</label>';
   h+='<div class="fmt-hint">告诉大模型每日播报怎么写：语气、结构、要求。留空用默认。</div>';
   h+='<textarea class="eng-input" id="llm_daily_prompt" style="min-height:140px">'+esc(llm.daily_prompt||'')+'</textarea>';

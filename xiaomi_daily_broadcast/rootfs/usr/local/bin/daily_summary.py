@@ -148,7 +148,7 @@ def load_config():
             for _eid, _val in list(_s.items()):
                 if isinstance(_val, dict):
                     _s[_eid] = {"room": _val.get("room", ""), "usage": _val.get("usage", ""),
-                                "label": _val.get("label", "")}
+                                "label": _val.get("label", ""), "muted": _val.get("muted") is True}
     _norm_segs = ("lights", "doors", "important_devices")
     for _seg in _norm_segs:
         _s = cfg.get(_seg)
@@ -169,6 +169,7 @@ def load_config():
                     "room": _val.get("room", ""),
                     "usage": _val.get("usage", ""),
                     "label": _val.get("label", ""),
+                    "muted": _val.get("muted") is True,
                     "power_type": _pt,
                 }
     return cfg
