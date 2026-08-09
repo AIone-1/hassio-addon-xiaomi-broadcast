@@ -263,7 +263,7 @@ WEATHER_CN = {"clear-night": "晴", "sunny": "晴", "partlycloudy": "多云", "c
 
 SECTION_META = {
     "greeting": ("问候语", "一句自然温暖的开场问候（15到45字）。这是整段播报唯一介绍当天日期的地方，自然带上星期几、节日、天气。注意：绝对不要写'早上好''下午好''晚上好'等时间段词（播报时会自动按当前时间加上），写'周六'开头即可，如'周六的周末阳光正好'"),
-    "ending": ("结束语", "一句自然收尾的话（15到45字）。注意：今天星期几、是不是周末、什么节日，开头问候语已经说过了，这里绝对不要再重复日期/星期/周末/节日，就自然收尾、送一句祝愿"),
+    "ending": ("结束语", "一句自然收尾的话（15到45字）。注意：①今天星期几、是不是周末、什么节日，开头问候语已经说过了，这里绝对不要再重复日期/星期/周末/节日；②绝对不要写任何时间段词（早上/早晨/上午/中午/下午/傍晚/晚上/夜晚/夜色/黄昏/晚安/好梦/睡觉等）——播报可能在任何时段进行，这些词会和实际时间不符，就写通用的收尾祝愿，如'愿这份温暖常伴你左右，一切顺心'"),
     "tip": ("小贴士", "一条任何时候都适用的实用生活小贴士（15到45字）。注意：不要提星期几/周末/节日/日期，也不要写'早上''晚上''睡前'等时段词（播报时会自动加'小贴士''午后小提示''睡前小提示'前缀），就纯说具体建议"),
     "enc": ("鼓励语", "一句温暖鼓励的话（15到45字）。注意：不要提星期几/周末/节日/日期，就纯说鼓励的话，如'辛苦了，早点休息吧'"),
 }
@@ -1414,11 +1414,11 @@ var TPL_GROUPS=[
   ]},
   {title:'句式',open:false,fields:[
     {k:'fmt_temp_prefix',label:'温度·开头',ph:'示例：温度：',def:'温度：',type:'text'},
-    {k:'fmt_temp_item',label:'温度·每条',ph:'{room}房间 {now}当前 {low}最低 {high}最高。示例：{room}现在{now}度，全天{low}到{high}度',def:'{room}当前{now}度，全天{low}到{high}度',type:'text'},
+    {k:'fmt_temp_item',label:'温度·每条',ph:'{label}房间+用途 {room}房间 {now}当前 {low}最低 {high}最高。示例：{label}现在{now}度，全天{low}到{high}度',def:'{label}当前{now}度，全天{low}到{high}度',type:'text'},
     {k:'fmt_temp_alert',label:'温度·高温提醒',ph:'{rooms}合并房间。示例：{rooms}温度过高',def:'{rooms}温度过高',type:'text'},
     {k:'fmt_temp_alert_low',label:'温度·低温提醒',ph:'{rooms}合并房间。示例：{rooms}温度偏低',def:'{rooms}温度偏低，建议注意保暖',type:'text'},
     {k:'fmt_humidity_prefix',label:'湿度·开头',ph:'示例：湿度：',def:'湿度：',type:'text'},
-    {k:'fmt_humidity_item',label:'湿度·每条',ph:'{room}房间 {hum}湿度。示例：{room}是{hum}%',def:'{room}{hum}%',type:'text'},
+    {k:'fmt_humidity_item',label:'湿度·每条',ph:'{label}房间+用途 {room}房间 {hum}湿度。示例：{label}是{hum}%',def:'{label}{hum}%',type:'text'},
     {k:'fmt_humidity_dry',label:'湿度·干燥',ph:'{rooms}合并房间。示例：{rooms}比较干燥',def:'{rooms}比较干燥',type:'text'},
     {k:'fmt_humidity_wet',label:'湿度·过湿',ph:'{rooms}合并房间。示例：{rooms}湿度偏高',def:'{rooms}湿度偏高',type:'text'},
     {k:'fmt_power_prefix',label:'耗电·开头',ph:'{total}总量。示例：耗电量：共{total}度',def:'耗电量：共{total}度',type:'text'},

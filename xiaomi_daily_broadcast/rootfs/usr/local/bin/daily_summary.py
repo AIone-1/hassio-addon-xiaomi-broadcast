@@ -137,8 +137,16 @@ def load_config():
         pass
 
     # 🔑 传感器配置值兼容：新格式 {eid: {room, usage, power_type}} 规范化
-    # 普通段 → {eid: room}（usage 只存展示）；power_sensors → {eid: {room, power_type}}（用电三方案需要 power_type）
-    _norm_segs = ("temp_sensors", "humidity_sensors", "power_now", "lights", "doors", "important_devices")
+    # 温度/湿度/实时功率/power 保留 {room, usage}——播报用 room+usage（"客厅冰箱"）避免"客厅10度"歧义
+    # 其他段（lights/doors/important_devices）→ {eid: room} 字符串
+    _keep_usage = ("temp_sensors", "humidity_sensors", "power_now")
+    for _seg in _keep_usage:
+        _s = cfg.get(_seg)
+        if isinstance(_s, dict):
+            for _eid, _val in list(_s.items()):
+                if isinstance(_val, dict):
+                    _s[_eid] = {"room": _val.get("room", ""), "usage": _val.get("usage", "")}
+    _norm_segs = ("lights", "doors", "important_devices")
     for _seg in _norm_segs:
         _s = cfg.get(_seg)
         if isinstance(_s, dict):
@@ -444,6 +452,21 @@ def _power_label(eid, meta):
     """用电实体的播报名。🐛 关键：必须 room+usage 组合（如"卧室电源1"），
     不能只用 room——同房间多个用电实体（卧室电源1/电源2、客厅冰箱/机柜）才会互相覆盖导致漏算。
     旧配置无 usage 时退回 room 或 eid。"""
+    if isinstance(meta, dict):
+        room = (meta.get("room") or "").strip()
+        usage = (meta.get("usage") or "").strip()
+        if room and usage:
+            return f"{room}{usage}"
+        if room:
+            return room
+        return eid
+    return (meta or eid).strip()
+
+
+def _sensor_label(eid, meta):
+    """温度/湿度等传感器的播报名：room+usage（"客厅冰箱"）。
+    🐛 用途必带——同一个房间可能多个传感器（客厅=客厅冰箱温度 vs 客厅室温），
+    只说"客厅10度"歧义。旧配置无 usage 时退回 room。"""
     if isinstance(meta, dict):
         room = (meta.get("room") or "").strip()
         usage = (meta.get("usage") or "").strip()
@@ -1037,6 +1060,22 @@ def generate_with_llm(report, config):
     return sentences
 
 
+def _ending_time_ok(text, h):
+    """🔑 结束语缓存的时间词校验：文案带夜间词但当前不是晚上（或反之），则返回 False（改用当前时段默认）。
+    大模型提前缓存的一周结束语可能写"夜色渐浓/晚安"（夜里生成的），早上播就明显不对。"""
+    NIGHT_WORDS = ("夜色", "夜晚", "黄昏", "晚安", "好梦", "睡觉", "入眠", "梦乡", "夜深", "安睡")
+    MORNING_WORDS = ("早晨", "早安", "晨曦", "清晨")
+    if not text:
+        return True
+    is_night = h >= 18 or h < 6
+    is_morning = 6 <= h < 12
+    if any(w in text for w in NIGHT_WORDS) and not is_night:
+        return False
+    if any(w in text for w in MORNING_WORDS) and not is_morning:
+        return False
+    return True
+
+
 def build_ending(h):
     """按时间段返回播报结束语。模板和 LLM 引擎共用，保证每次都有收尾。
     手动模式：手动结束语(ending_text) > 7天循环结束语(按星期几) > 默认。
@@ -1235,6 +1274,9 @@ def build_period_text(summary_type, ps, now, config):
     # 结束语：板块开关可关；优先用当天配置的（手动/大模型一周缓存），否则按时间段默认
     if ts_on(config, "ending"):
         _ecache = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
+        # 🔑 结束语时间词校验：缓存带夜间词但当前不是晚上 → 用当前时段默认（避免早上播"夜色渐浓"）
+        if _ecache and not _ending_time_ok(_ecache, now.hour):
+            _ecache = ""
         lines.append(_ecache if _ecache else build_ending(now.hour))
     return lines
 
@@ -1419,29 +1461,31 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             excl_balcony = ts(config, "temp_exclude_balcony", True)
             # 🔑 不参与温度报警的房间（可多个，顿号/逗号分隔）
             excl_rooms = [r.strip() for r in re.split(r'[，,、\s]+', ts(config, "temp_exclude_rooms", "")) if r.strip()]
-            for eid, room in config["temp_sensors"].items():
+            for eid, meta in config["temp_sensors"].items():
+                room = meta.get("room", "") if isinstance(meta, dict) else meta
+                label = _sensor_label(eid, meta)  # room+usage（客厅冰箱）
                 cur = get_float(states, eid)
                 hist = temp_history.get(eid, [])
                 if cur is None:
                     continue
-                entry = {"room": room, "now": round(cur, 1)}
+                entry = {"room": room, "label": label, "now": round(cur, 1)}
                 hi = lo = None
                 if hist:
                     hi, lo = max(hist), min(hist)
                     entry["low"], entry["high"] = round(lo, 1), round(hi, 1)
                     if hi - lo < temp_diff:
-                        temp_parts.append(f"{room}全天{cur:.0f}度")
+                        temp_parts.append(f"{label}全天{cur:.0f}度")
                     else:
-                        temp_parts.append(f"{room}当前{cur:.0f}度，全天{lo:.0f}到{hi:.0f}度")
+                        temp_parts.append(f"{label}当前{cur:.0f}度，全天{lo:.0f}到{hi:.0f}度")
                 else:
-                    temp_parts.append(f"{room}当前{cur:.0f}度")
-                # 排除的房间 + 阳台不参与报警
+                    temp_parts.append(f"{label}当前{cur:.0f}度")
+                # 排除的房间 + 阳台不参与报警（用房间名判断）
                 if any(k in room for k in excl_rooms) or (excl_balcony and "阳台" in room):
                     pass
                 elif cur > temp_high:
-                    temp_alerts.append((room, cur))
+                    temp_alerts.append((label, cur))
                 elif cur < temp_low:
-                    temp_alerts_low.append((room, cur))
+                    temp_alerts_low.append((label, cur))
                 temp_entries.append(entry)
                 report["temperature"].append(entry)
         report["temp_alerts"] = temp_alerts
@@ -1454,9 +1498,10 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 _t_item = ts_fmt(config, "temp", "", "item")
                 _t_alert = ts_fmt(config, "temp", "", "alert")
                 if _t_item:
-                    # 每条用用户模板：{room} {now} {low} {high}
+                    # 每条用用户模板：{room}=房间 {label}=房间+用途 {now} {low} {high}
                     _t_items = "，".join(
-                        _t_item.replace("{room}", e["room"]).replace("{now}", f"{e['now']:.0f}")
+                        _t_item.replace("{room}", e.get("room", "")).replace("{label}", e.get("label", e.get("room", "")))
+                                .replace("{now}", f"{e['now']:.0f}")
                                 .replace("{low}", f"{e.get('low', 0):.0f}" if e.get('low') is not None else "")
                                 .replace("{high}", f"{e.get('high', 0):.0f}" if e.get('high') is not None else "")
                         for e in temp_entries)
@@ -1498,17 +1543,21 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         hum_line = ""
         if ts_on(config, "humidity"):
-            hums = {}
-            for eid, room in config["humidity_sensors"].items():
+            hums = {}  # label(room+usage) → value
+            hum_rooms = {}  # label → 房间名（用于排除判断）
+            for eid, meta in config["humidity_sensors"].items():
+                room = meta.get("room", "") if isinstance(meta, dict) else meta
+                label = _sensor_label(eid, meta)
                 v = get_float(states, eid)
                 if v is not None and v <= 100:
-                    hums[room] = v
+                    hums[label] = v
+                    hum_rooms[label] = room
             dry_th = ts(config, "humidity_dry", 40)
             wet_th = ts(config, "humidity_wet", 80)
             # 🔑 不参与湿度报警的房间（卫生间等湿度常高不算异常）
             hum_excl = [r.strip() for r in re.split(r'[，,、\s]+', ts(config, "humidity_exclude_rooms", "")) if r.strip()]
-            dry = [r for r, h in hums.items() if h < dry_th and not any(k in r for k in hum_excl)]
-            wet = [r for r, h in hums.items() if h > wet_th and not any(k in r for k in hum_excl)]
+            dry = [lb for lb, h in hums.items() if h < dry_th and not any(k in hum_rooms[lb] for k in hum_excl)]
+            wet = [lb for lb, h in hums.items() if h > wet_th and not any(k in hum_rooms[lb] for k in hum_excl)]
             report["humidity_dry"] = dry
             report["humidity_wet"] = wet
             if hums:
@@ -1520,7 +1569,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     _h_dry = ts_fmt(config, "humidity", "", "dry")
                     _h_wet = ts_fmt(config, "humidity", "", "wet")
                     if _h_item:
-                        _h_items = "，".join(_h_item.replace("{room}", r).replace("{hum}", f"{h:.0f}") for r, h in hums.items())
+                        _h_items = "，".join(_h_item.replace("{room}", r).replace("{label}", r).replace("{hum}", f"{h:.0f}") for r, h in hums.items())
                     else:
                         _h_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
                     _h_extra = ""
@@ -1885,6 +1934,9 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # 结束语：板块开关可关（sections.ending=false 不播结束语）；优先用当天配置的，否则按时间段默认
         if ts_on(config, "ending"):
             _ending = week_day_text(config, "ending", now.strftime("%Y-%m-%d"))
+            # 🔑 结束语时间词校验（同每日路径）
+            if _ending and not _ending_time_ok(_ending, h):
+                _ending = ""
             lines.append(_ending if _ending else build_ending(h))
 
         # 📸 每日快照落盘（周期总结的数据源，先于播报）

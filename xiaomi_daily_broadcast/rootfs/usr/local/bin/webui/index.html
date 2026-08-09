@@ -616,11 +616,11 @@ var TPL_GROUPS=[
   ]},
   {title:'句式',open:false,fields:[
     {k:'fmt_temp_prefix',label:'温度·开头',ph:'示例：温度：',def:'温度：',type:'text'},
-    {k:'fmt_temp_item',label:'温度·每条',ph:'{room}房间 {now}当前 {low}最低 {high}最高。示例：{room}现在{now}度，全天{low}到{high}度',def:'{room}当前{now}度，全天{low}到{high}度',type:'text'},
+    {k:'fmt_temp_item',label:'温度·每条',ph:'{label}房间+用途 {room}房间 {now}当前 {low}最低 {high}最高。示例：{label}现在{now}度，全天{low}到{high}度',def:'{label}当前{now}度，全天{low}到{high}度',type:'text'},
     {k:'fmt_temp_alert',label:'温度·高温提醒',ph:'{rooms}合并房间。示例：{rooms}温度过高',def:'{rooms}温度过高',type:'text'},
     {k:'fmt_temp_alert_low',label:'温度·低温提醒',ph:'{rooms}合并房间。示例：{rooms}温度偏低',def:'{rooms}温度偏低，建议注意保暖',type:'text'},
     {k:'fmt_humidity_prefix',label:'湿度·开头',ph:'示例：湿度：',def:'湿度：',type:'text'},
-    {k:'fmt_humidity_item',label:'湿度·每条',ph:'{room}房间 {hum}湿度。示例：{room}是{hum}%',def:'{room}{hum}%',type:'text'},
+    {k:'fmt_humidity_item',label:'湿度·每条',ph:'{label}房间+用途 {room}房间 {hum}湿度。示例：{label}是{hum}%',def:'{label}{hum}%',type:'text'},
     {k:'fmt_humidity_dry',label:'湿度·干燥',ph:'{rooms}合并房间。示例：{rooms}比较干燥',def:'{rooms}比较干燥',type:'text'},
     {k:'fmt_humidity_wet',label:'湿度·过湿',ph:'{rooms}合并房间。示例：{rooms}湿度偏高',def:'{rooms}湿度偏高',type:'text'},
     {k:'fmt_power_prefix',label:'耗电·开头',ph:'{total}总量。示例：耗电量：共{total}度',def:'耗电量：共{total}度',type:'text'},
