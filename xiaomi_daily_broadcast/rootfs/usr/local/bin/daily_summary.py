@@ -1455,18 +1455,23 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     _t_items = "，".join(temp_parts)
                 _t_extra = ""
                 if temp_alerts:
+                    # 🐛 高温提醒合并：卧室厨房、客厅温度过高，建议通风降温（不逐房间重复建议）
+                    _t_rooms = "、".join(r for r, _ in temp_alerts)
                     if _t_alert:
-                        _t_extra = "，" + "，".join(
+                        _t_extra = "，" + "、".join(
                             _t_alert.replace("{room}", r).replace("{now}", f"{c:.0f}") for r, c in temp_alerts)
+                        if "{rooms}" in _t_alert:
+                            _t_extra = "，" + _t_alert.replace("{rooms}", _t_rooms).replace("{now}", "")
                     else:
-                        _t_extra = "，注意：" + "、".join(f"{r} {c:.0f}度偏高" for r, c in temp_alerts) + "，建议通风降温"
+                        _t_extra = f"，注意：{_t_rooms}温度过高，建议通风降温"
                 lines.append(_t_prefix + _t_items + _t_extra + "。")
             else:
                 # 旧格式字符串模板（整条）兼容
                 _t_tpl = _tp or "温度：{items}{extra}"
                 _t_extra = ""
                 if temp_alerts:
-                    _t_extra = "，注意：" + "、".join(f"{r} {c:.0f}度偏高" for r, c in temp_alerts) + "，建议通风降温"
+                    _t_rooms = "、".join(r for r, _ in temp_alerts)
+                    _t_extra = f"，注意：{_t_rooms}温度过高，建议通风降温"
                 lines.append(_t_tpl.replace("{items}", "，".join(temp_parts)).replace("{extra}", _t_extra) + "。")
 
         # 2. 💧 湿度（单独一条）
@@ -1497,23 +1502,31 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     else:
                         _h_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
                     _h_extra = ""
+                    _dry_rooms = "、".join(dry)
+                    _wet_rooms = "、".join(wet)
                     if dry and _h_dry:
-                        _h_extra += "，" + "、".join(_h_dry.replace("{room}", r) for r in dry)
+                        if "{rooms}" in _h_dry:
+                            _h_extra += "，" + _h_dry.replace("{rooms}", _dry_rooms)
+                        else:
+                            _h_extra += "，" + "、".join(_h_dry.replace("{room}", r) for r in dry)
                     elif dry:
-                        _h_extra += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
+                        _h_extra += f"，{_dry_rooms}比较干燥，建议开加湿器"
                     if wet and _h_wet:
-                        _h_extra += "，" + "、".join(_h_wet.replace("{room}", r) for r in wet)
+                        if "{rooms}" in _h_wet:
+                            _h_extra += "，" + _h_wet.replace("{rooms}", _wet_rooms)
+                        else:
+                            _h_extra += "，" + "、".join(_h_wet.replace("{room}", r) for r in wet)
                     elif wet:
-                        _h_extra += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+                        _h_extra += f"，{_wet_rooms}湿度偏高，建议通风除湿"
                     hum_line = _h_prefix + _h_items + _h_extra
                 else:
                     _hum_tpl = _hp or "湿度：{items}{extra}"
                     _hum_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
                     _hum_extra = ""
                     if dry:
-                        _hum_extra += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
+                        _hum_extra += f"，{'、'.join(dry)}比较干燥，建议开加湿器"
                     if wet:
-                        _hum_extra += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+                        _hum_extra += f"，{'、'.join(wet)}湿度偏高，建议通风除湿"
                     hum_line = _hum_tpl.replace("{items}", _hum_items).replace("{extra}", _hum_extra)
             elif dry or wet:
                 hum_line = "，" + "，".join((["、".join(dry) + "比较干燥"] if dry else []) + (["、".join(wet) + "湿度偏高"] if wet else []))
@@ -1622,17 +1635,22 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     else:
                         _n_items = "，".join(f"{n} {w:.0f}瓦" for n, w in now_pairs)
                     _n_extra = ""
+                    _dev_rooms = "、".join(n for n, _ in high_devices)
                     if high_devices:
                         if _n_alert:
-                            _n_extra = "，" + "、".join(_n_alert.replace("{device}", n).replace("{w}", f"{p:.0f}") for n, p in high_devices)
+                            if "{devices}" in _n_alert:
+                                _n_extra = "，" + _n_alert.replace("{devices}", _dev_rooms)
+                            else:
+                                _n_extra = "，" + "、".join(_n_alert.replace("{device}", n).replace("{w}", f"{p:.0f}") for n, p in high_devices)
                         else:
-                            _n_extra = "，注意：" + "、".join(f"{n} {p:.0f}瓦" for n, p in high_devices) + "功率较高，不用时可以关掉"
+                            _n_extra = f"，注意：{_dev_rooms}功率较高，不用时可以关掉"
                     power_now_line = _n_prefix + _n_items + _n_extra
                 else:
                     _now_tpl = _np or "实时功率：{items}{extra}"
                     _now_extra = ""
                     if high_devices:
-                        _now_extra = "，注意：" + "、".join(f"{n} {p:.0f}瓦" for n, p in high_devices) + "功率较高，不用时可以关掉"
+                        _dev_rooms = "、".join(n for n, _ in high_devices)
+                        _now_extra = f"，注意：{_dev_rooms}功率较高，不用时可以关掉"
                     power_now_line = _now_tpl.replace("{items}", "，".join(now_parts)).replace("{extra}", _now_extra)
             report["power_now"] = {"now": [[n, p] for n, p in high_devices] if high_devices else []}
         if power_now_line:
