@@ -1,5 +1,5 @@
 name: "小爱每日播报"
-version: "1.1.95"
+version: "1.1.96"
 slug: "xiaomi_daily_broadcast"
 description: >-
   定时把家里传感器状态生成中文播报稿，推送到小米音箱朗读。
@@ -30,7 +30,6 @@ options:
   ha_port: 8123
   ha_token: ""
   speaker_notify: "notify.xiaomi_cn_484529620_x08a_play_text_a_5_1"
-  tts_speed: 4.5
   fallback_to_template: true
   deepseek_api_key: ""
   deepseek_model: "deepseek-chat"
@@ -41,7 +40,6 @@ schema:
   ha_port: "port?"
   ha_token: "password?"
   speaker_notify: "str?"
-  tts_speed: "float?"
   fallback_to_template: "bool?"
   deepseek_api_key: "password?"
   deepseek_model: "str?"

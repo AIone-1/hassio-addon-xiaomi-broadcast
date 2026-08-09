@@ -31,7 +31,6 @@
 |--------|------|------|
 | `ha_host` / `ha_port` / `ha_token` | HA 连接（默认 supervisor 自动） | supervisor |
 | `speaker_notify` | 小米音箱的 notify 实体 | 需填 |
-| `tts_speed` | 播报语速（字/秒） | 4.5 |
 | `deepseek_api_key` / `model` / `base_url` | 大模型直连配置 | — |
 | `fallback_to_template` | LLM 失败时是否回退模板 | true |
 

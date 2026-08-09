@@ -79,8 +79,7 @@ def load_config():
     # options 只在 JSON 没有时兜底（首次安装场景）
     if not cfg.get("speaker_notify") and opt.get("speaker_notify"):
         cfg["speaker_notify"] = opt["speaker_notify"]
-    if opt.get("tts_speed") is not None:
-        cfg["tts_speed"] = float(opt["tts_speed"])
+    # tts_speed 已移除：小米 TTS 不支持调语速，改为固定播报节奏（不打断）
 
     # 引擎（LLM 直连 DeepSeek）
     engine = cfg.setdefault("engine", {})
@@ -2098,16 +2097,16 @@ async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="d
         # 🔑 逐句：显字幕 → 念 → 等念完 → 下一句
         write_broadcast_state('broadcasting', all_sentences, played_to=0, run_id=run_id,
                               mode='speech', summary_type=summary_type)
-        SPEED = float(config.get("tts_speed", 4.5))
-
+        # 固定播报节奏（tts_speed 已移除，小米 TTS 不支持调语速）：
+        # 每句等待 = 字数/4.5 + 0.5s 句间停顿，至少 1.2s——保证上一句念完才播下一句，不打断
         for i, sentence in enumerate(sentences):
             # 1. 字幕先出来
             write_broadcast_state('broadcasting', all_sentences, played_to=i + 1, run_id=run_id,
                                   mode='speech', summary_type=summary_type)
             # 2. 发给音箱念这句
             await speak(ws, sentence, config, cid=9000 + i)
-            # 3. 等这句念完
-            wait = len(sentence) / SPEED
+            # 3. 等这句念完（有下限，不打断）
+            wait = max(len(sentence) / 4.5 + 0.5, 1.2)
             await asyncio.sleep(wait)
 
         write_broadcast_state('done', all_sentences, played_to=len(sentences), run_id=run_id,
