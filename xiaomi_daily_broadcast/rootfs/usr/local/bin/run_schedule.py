@@ -182,9 +182,9 @@ def save_edit_cfg(updates):
 # 4 个播报按钮：日/周/月/年。entity_id 由名字拼音生成（创建后按实际 id 更新）
 BUTTONS = [
     {"type": "daily",   "name": "传感器实体·日", "entity": "input_button.chuan_gan_qi_shi_ti_ri", "icon": "mdi:calendar-today"},
-    {"type": "weekly",  "name": "传感器实体·周",   "entity": "input_button.xiao_ai_bo_bao_zhou",  "icon": "mdi:calendar-week"},
-    {"type": "monthly", "name": "传感器实体·月",   "entity": "input_button.xiao_ai_bo_bao_yue",   "icon": "mdi:calendar-month"},
-    {"type": "yearly",  "name": "传感器实体·年",   "entity": "input_button.xiao_ai_bo_bao_nian",  "icon": "mdi:calendar-star"},
+    {"type": "weekly",  "name": "传感器实体·周",   "entity": "input_button.chuan_gan_qi_shi_ti_zhou", "icon": "mdi:calendar-week"},
+    {"type": "monthly", "name": "传感器实体·月",   "entity": "input_button.chuan_gan_qi_shi_ti_yue", "icon": "mdi:calendar-month"},
+    {"type": "yearly",  "name": "传感器实体·年",   "entity": "input_button.chuan_gan_qi_shi_ti_nian", "icon": "mdi:calendar-star"},
 ]
 # 旧版兼容按钮 an_niu 已移除（用户要求删掉，避免 5 个实体）
 
@@ -442,6 +442,25 @@ def ensure_button_entity():
                 r = json.loads(await ws.recv())
                 return set(s.get("entity_id") for s in r.get("result", []))
         existing = asyncio.run(_existing())
+        # 🔑 迁移：旧命名（xiao_ai_bo_bao_zhou/yue/nian）删掉，统一成"传感器实体"前缀（chuan_gan_qi_shi_ti_*）
+        OLD_ENTITIES = ("input_button.xiao_ai_bo_bao_zhou",
+                        "input_button.xiao_ai_bo_bao_yue",
+                        "input_button.xiao_ai_bo_bao_nian")
+        for _old in OLD_ENTITIES:
+            if _old in existing:
+                try:
+                    async def _del_old(entity_id):
+                        async with websockets.connect(ws_url, max_size=4 * 1024 * 1024) as ws:
+                            await ws.recv()
+                            await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                            await ws.recv()
+                            await ws.send(json.dumps({"id": 5, "type": "config/entity_registry/remove",
+                                                      "entity_id": entity_id}))
+                            return json.loads(await ws.recv()).get("success", False)
+                    if asyncio.run(_del_old(_old)):
+                        log(f"🗑️ 已删除旧按钮实体（命名不统一）: {_old}")
+                except Exception as e:
+                    log(f"⚠️ 删除旧按钮失败 {_old}: {e}")
         ok_all = True
         for b in BUTTONS:
             if b["entity"] in existing:
@@ -732,6 +751,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": True}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/clear-snapshot":
+            # 🗑️ 清空周期统计快照（daily_stats_history.json）——测试数据污染时用，周期统计重新积累
+            try:
+                ds.save_snapshots({})
+                self._send(200, json.dumps({"ok": True, "msg": "周期数据已清空，从今天开始重新积累"}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/theme":
             try:
                 data = json.loads(self._body() or b"{}")
@@ -969,6 +995,11 @@ WEBUI_HTML = """<!DOCTYPE html>
   </div>
   <div class="card">
     <div id="histList" style="font-size:12px;color:#8b949e">选择日期查看播报记录</div>
+  </div>
+  <div class="card">
+    <button class="danger" onclick="clearSnapshot()">🗑️ 清空周期统计数据</button>
+    <div class="fmt-hint" style="margin-top:4px">周期统计（周/月/年）用的每日数据快照。之前有测试数据导致统计不准的话，点这个清空，从今天开始重新积累。</div>
+    <div class="save-status" id="snapStatus"></div>
   </div>
 </div>
 
@@ -2232,6 +2263,15 @@ function histView(ds,idx){
   });
 }
 function loadHist(){ histLoadCal(); }
+// 🗑️ 清空周期统计数据快照（测试数据污染时用）
+function clearSnapshot(){
+  if(!confirm('确定清空周期统计数据吗？清空后周/月/年统计从今天开始重新积累，不可恢复。')) return;
+  document.getElementById('snapStatus').textContent='清空中...';
+  fetch(BASE+'clear-snapshot',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    var s=document.getElementById('snapStatus');
+    s.textContent = d.ok?'✅ 已清空，周期统计从今天重新积累':'❌ 清空失败';
+  }).catch(function(){document.getElementById('snapStatus').textContent='❌ 清空失败';});
+}
 
 setInterval(refreshLog,5000);
 refreshLog();

@@ -189,6 +189,11 @@
   <div class="card">
     <div id="histList" style="font-size:12px;color:#8b949e">选择日期查看播报记录</div>
   </div>
+  <div class="card">
+    <button class="danger" onclick="clearSnapshot()">🗑️ 清空周期统计数据</button>
+    <div class="fmt-hint" style="margin-top:4px">周期统计（周/月/年）用的每日数据快照。之前有测试数据导致统计不准的话，点这个清空，从今天开始重新积累。</div>
+    <div class="save-status" id="snapStatus"></div>
+  </div>
 </div>
 
 <script>
@@ -1451,6 +1456,15 @@ function histView(ds,idx){
   });
 }
 function loadHist(){ histLoadCal(); }
+// 🗑️ 清空周期统计数据快照（测试数据污染时用）
+function clearSnapshot(){
+  if(!confirm('确定清空周期统计数据吗？清空后周/月/年统计从今天开始重新积累，不可恢复。')) return;
+  document.getElementById('snapStatus').textContent='清空中...';
+  fetch(BASE+'clear-snapshot',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    var s=document.getElementById('snapStatus');
+    s.textContent = d.ok?'✅ 已清空，周期统计从今天重新积累':'❌ 清空失败';
+  }).catch(function(){document.getElementById('snapStatus').textContent='❌ 清空失败';});
+}
 
 setInterval(refreshLog,5000);
 refreshLog();
