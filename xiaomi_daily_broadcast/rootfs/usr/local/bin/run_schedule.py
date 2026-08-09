@@ -948,6 +948,10 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
+  /* 🔑 播报页控件统一样式：和模板页一致（白底、14px、40px 高、圆角8px） */
+  .row button,.row select{font-size:14px;height:40px;border-radius:8px}
+  .row button{background:var(--accent);color:#fff;border:none;padding:0 14px;line-height:1}
+  .row select{background:var(--bg-inset);color:var(--text);border:1px solid var(--border);padding:0 10px}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
   #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
   #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
@@ -1032,7 +1036,7 @@ WEBUI_HTML = """<!DOCTYPE html>
 <div class="page on" id="page-main">
   <div class="card">
     <div class="row">
-      <select id="type">
+      <select id="type" title="播报类型">
         <option value="daily">📅 日</option>
         <option value="weekly">🗓️ 周</option>
         <option value="monthly">📆 月</option>
@@ -1043,13 +1047,17 @@ WEBUI_HTML = """<!DOCTYPE html>
         <option value="llm">🤖 大模型</option>
       </select>
       <button id="btnSpeak" onclick="trigger(false)">📢 语音播报</button>
-      <select id="pauseSel" onchange="changePause()" title="播报句间停顿" style="padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:none;height:40px">
-        <option value="0.3">⏸️ 0.3s</option>
-        <option value="0.5" selected>⏸️ 0.5s</option>
-        <option value="0.8">⏸️ 0.8s</option>
-        <option value="1.0">⏸️ 1.0s</option>
-        <option value="1.5">⏸️ 1.5s</option>
-      </select>
+      <!-- ⏸️ 句间停顿：带文字说明，和模板页控件同款样式 -->
+      <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:14px;color:var(--dim)">
+        停顿
+        <select id="pauseSel" onchange="changePause()" title="播报时每句之间的停顿时间" style="padding:8px;border-radius:8px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:none;height:40px;font-size:14px">
+          <option value="0.3">0.3秒</option>
+          <option value="0.5" selected>0.5秒</option>
+          <option value="0.8">0.8秒</option>
+          <option value="1.0">1.0秒</option>
+          <option value="1.5">1.5秒</option>
+        </select>
+      </span>
       <button id="btnText" onclick="trigger(true)">📝 文字播报</button>
       <button id="btnClear" onclick="clearLog()">🗑️ 清空日志</button>
       <button id="btnEntities" onclick="showEntities()">🔑 传感器实体</button>
