@@ -1410,11 +1410,15 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         temp_parts = []
         temp_alerts = []
+        temp_alerts_low = []
         temp_entries = []
         if ts_on(config, "temp"):
             temp_high = ts(config, "temp_high_alert", 32)
+            temp_low = ts(config, "temp_low_alert", 10)
             temp_diff = ts(config, "temp_constant_diff", 1)
             excl_balcony = ts(config, "temp_exclude_balcony", True)
+            # 🔑 不参与温度报警的房间（可多个，顿号/逗号分隔）
+            excl_rooms = [r.strip() for r in re.split(r'[，,、\s]+', ts(config, "temp_exclude_rooms", "")) if r.strip()]
             for eid, room in config["temp_sensors"].items():
                 cur = get_float(states, eid)
                 hist = temp_history.get(eid, [])
@@ -1431,8 +1435,13 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                         temp_parts.append(f"{room}当前{cur:.0f}度，全天{lo:.0f}到{hi:.0f}度")
                 else:
                     temp_parts.append(f"{room}当前{cur:.0f}度")
-                if cur > temp_high and not (excl_balcony and "阳台" in room):
+                # 排除的房间 + 阳台不参与报警
+                if any(k in room for k in excl_rooms) or (excl_balcony and "阳台" in room):
+                    pass
+                elif cur > temp_high:
                     temp_alerts.append((room, cur))
+                elif cur < temp_low:
+                    temp_alerts_low.append((room, cur))
                 temp_entries.append(entry)
                 report["temperature"].append(entry)
         report["temp_alerts"] = temp_alerts
@@ -1464,6 +1473,14 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                             _t_extra = "，" + _t_alert.replace("{rooms}", _t_rooms).replace("{now}", "")
                     else:
                         _t_extra = f"，注意：{_t_rooms}温度过高，建议通风降温"
+                # 🔑 低温提醒（合并 + 建议一次）
+                if temp_alerts_low:
+                    _t_low_rooms = "、".join(r for r, _ in temp_alerts_low)
+                    _t_low_alert = ts_fmt(config, "temp", "", "alert_low")
+                    if _t_low_alert:
+                        _t_extra += "，" + _t_low_alert.replace("{rooms}", _t_low_rooms)
+                    else:
+                        _t_extra += f"，注意：{_t_low_rooms}温度偏低，建议注意保暖"
                 lines.append(_t_prefix + _t_items + _t_extra + "。")
             else:
                 # 旧格式字符串模板（整条）兼容
@@ -1472,6 +1489,9 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if temp_alerts:
                     _t_rooms = "、".join(r for r, _ in temp_alerts)
                     _t_extra = f"，注意：{_t_rooms}温度过高，建议通风降温"
+                if temp_alerts_low:
+                    _t_low_rooms = "、".join(r for r, _ in temp_alerts_low)
+                    _t_extra += f"，注意：{_t_low_rooms}温度偏低，建议注意保暖"
                 lines.append(_t_tpl.replace("{items}", "，".join(temp_parts)).replace("{extra}", _t_extra) + "。")
 
         # 2. 💧 湿度（单独一条）
@@ -1485,8 +1505,10 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                     hums[room] = v
             dry_th = ts(config, "humidity_dry", 40)
             wet_th = ts(config, "humidity_wet", 80)
-            dry = [r for r, h in hums.items() if h < dry_th]
-            wet = [r for r, h in hums.items() if h > wet_th]
+            # 🔑 不参与湿度报警的房间（卫生间等湿度常高不算异常）
+            hum_excl = [r.strip() for r in re.split(r'[，,、\s]+', ts(config, "humidity_exclude_rooms", "")) if r.strip()]
+            dry = [r for r, h in hums.items() if h < dry_th and not any(k in r for k in hum_excl)]
+            wet = [r for r, h in hums.items() if h > wet_th and not any(k in r for k in hum_excl)]
             report["humidity_dry"] = dry
             report["humidity_wet"] = wet
             if hums:
@@ -1603,28 +1625,17 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         power_now_line = ""
         if ts_on(config, "power_now"):
-            now_parts = []
-            for eid, meta in config.get("power_now", {}).items():
-                if eid.startswith("_"):
-                    continue
-                v = get_float(states, eid)
-                if v is not None and v > 0:
-                    # 🔑 标签以数字结尾（"卧室电源1"）紧接数值会连读，用空格隔开
-                    now_parts.append(f"{_power_label(eid, meta)} {v:.0f}瓦")
+            # 🔑 实时功率：按瓦数从大到小排序 + 限条数（power_now_top_n 可配，默认 3）
+            now_top_n = int(ts(config, "power_now_top_n", 3))
+            now_pairs = [(_power_label(eid, meta), get_float(states, eid))
+                         for eid, meta in config.get("power_now", {}).items()
+                         if not eid.startswith("_")]
+            now_pairs = [(n, w) for n, w in now_pairs if w is not None and w > 0]
+            now_pairs.sort(key=lambda x: -x[1])  # 瓦数大的在前
+            now_parts = [f"{n} {w:.0f}瓦" for n, w in now_pairs[:now_top_n]]
             high_alert = config.get("high_power_alert_w", 200)
-            high_devices = []
-            for eid, meta in config.get("power_now", {}).items():
-                if eid.startswith("_"):
-                    continue
-                v = get_float(states, eid)
-                if v is not None and v > high_alert:
-                    high_devices.append((_power_label(eid, meta), v))
+            high_devices = [pair for pair in now_pairs if pair[1] > high_alert]
             if now_parts:
-                # 每条设备的 label + 瓦数
-                now_pairs = [(_power_label(eid, meta), get_float(states, eid))
-                             for eid, meta in config.get("power_now", {}).items()
-                             if not eid.startswith("_")]
-                now_pairs = [(n, w) for n, w in now_pairs if w is not None and w > 0]
                 _np = ts_fmt(config, "power_now", None)
                 if isinstance(_np, dict):
                     _n_prefix = ts_fmt(config, "power_now", "实时功率：", "prefix")
