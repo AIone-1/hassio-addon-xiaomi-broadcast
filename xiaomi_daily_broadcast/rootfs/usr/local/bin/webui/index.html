@@ -33,7 +33,7 @@
   .row button,.row select{font-size:14px;height:40px;border-radius:8px}
   .row button{background:#ffffff;color:#24292f;border:1px solid #d0d7de;padding:0 14px;line-height:1}
   .row button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-  .row select{background:var(--bg-inset);color:var(--text);border:1px solid var(--border);padding:0 10px}
+  .row select{background:var(--bg-inset);color:#58a6ff;border:1px solid var(--border);padding:0 10px}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
   #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
   #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
@@ -102,6 +102,9 @@
 </head>
 <body data-theme="dark">
 <h1 style="display:flex;align-items:center;gap:8px">🎙️ 小爱每日播报
+  <!-- ‹ 后退 / 前进 ›：在 tab 之间回退/前进 -->
+  <button class="ghost" id="backBtn" onclick="histBack()" title="后退到上一个页面" style="padding:6px 10px;font-size:14px">‹</button>
+  <button class="ghost" id="fwdBtn" onclick="histFwd()" title="前进到下一个页面" style="padding:6px 10px;font-size:14px">›</button>
   <button class="ghost" id="fsBtn" onclick="toggleFullscreen()" style="margin-left:auto;padding:6px 12px;font-size:12px">⛶ 全屏</button>
   <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="padding:6px 12px;font-size:12px">☀️ 日间</button>
 </h1>
@@ -218,10 +221,10 @@
     </div>
     <div class="cal-grid" id="histCal"></div>
   </div>
-  <!-- 🛠️ 修复异常放最上面（历史记录上方，一进来就看到） -->
-  <div class="card">
+  <!-- 🛠️ 修复异常：只有选中有异常的日期才显示 -->
+  <div class="card" id="fixCard" style="display:none">
     <button class="danger" onclick="fixAnomaly()">🛠️ 修复异常传感器数据</button>
-    <div class="fmt-hint" style="margin-top:4px">日历上带 ⚠️ 的日期表示有传感器异常（如某设备一天耗电几十度，不正常）。选一个 ⚠️ 日期点这个修复（用该设备前两天正常值的平均值替换异常值）。</div>
+    <div class="fmt-hint" style="margin-top:4px">该天检测到传感器异常（如某设备一天耗电几十度，不正常）。点这个修复（用该设备前两天正常值的平均值替换异常值）。</div>
     <div class="save-status" id="fixStatus"></div>
   </div>
   <div class="card">
@@ -308,7 +311,24 @@ function markDirty(){
     if(ts){ ts.style.color='#e3b341'; ts.textContent='⚠️ 有未保存的修改'; }
   }
 }
+// 🔑 页面历史栈：tab 切换记录，‹ › 按钮回退/前进
+var pageHistory=[], pageHistoryIdx=-1, _histRestoring=false;
+function pushPageHistory(p){
+  if(_histRestoring) return;
+  // 去掉当前索引之后的历史（前进分支被新操作覆盖）
+  pageHistory = pageHistory.slice(0, pageHistoryIdx+1);
+  pageHistory.push(p);
+  pageHistoryIdx = pageHistory.length-1;
+  try{ history.pushState({page:p}, '', '#'+p); }catch(e){}
+}
+function histBack(){
+  if(pageHistoryIdx>0){ _histRestoring=true; pageHistoryIdx--; showPage(pageHistory[pageHistoryIdx]); _histRestoring=false; }
+}
+function histFwd(){
+  if(pageHistoryIdx<pageHistory.length-1){ _histRestoring=true; pageHistoryIdx++; showPage(pageHistory[pageHistoryIdx]); _histRestoring=false; }
+}
 function showPage(p){
+  pushPageHistory(p);
   // 🔑 从配置页切走时，各自页面有未保存修改则提醒（cfg 和 tpl 分开，不再互相清标记）
   if(p!=='cfg' && cfgDirty){
     var ok=confirm('传感器配置有未保存的修改，要保存吗？');
@@ -1584,6 +1604,9 @@ function histNav(dir){
 function histPick(ds){
   histSel=ds;
   histRenderCal();
+  // 🔑 只有选中异常日期才显示修复按钮，正常日期隐藏
+  var fc=document.getElementById('fixCard');
+  if(fc) fc.style.display=(histAnomalies[ds]?'block':'none');
   var list=document.getElementById('histList');
   list.innerHTML='<div style="color:var(--dim)">加载中...</div>';
   fetch(BASE+'history/day?date='+ds+'&_='+Date.now()).then(function(r){return r.json()}).then(function(entries){
@@ -1646,7 +1669,13 @@ function histView(ds,idx){
     list.innerHTML=h;
   });
 }
-function loadHist(){ histLoadCal(); }
+function loadHist(){
+  histLoadCal();
+  // 🔑 打开历史页默认选中并显示当天日期（不用手动点）
+  var today=new Date();
+  var ds=histFmt(today.getFullYear(),today.getMonth())+'-'+pad(today.getDate());
+  setTimeout(function(){ histPick(ds); }, 300);  // 等日历渲染完再选中当天
+}
 // 🗑️ 清除当天统计数据快照（今天数据异常时用，不影响之前）
 function clearSnapshot(){
   if(!confirm('确定清除今天的数据吗？只清除今天，之前正常的数据不受影响。')) return;
@@ -1678,6 +1707,14 @@ loadStats();
 // 默认全部灰边（不选中任何按钮）
 setActive('');
 loadEngine();
+// 🔑 页面历史初始化：从 URL hash 恢复，否则默认播报页
+pageHistory=['main']; pageHistoryIdx=0;
+(function(){
+  try{
+    var h=location.hash.replace('#','');
+    if(h && ['main','sec','cfg','tpl','llm','hist'].indexOf(h)>=0){ showPage(h); }
+  }catch(e){}
+})();
 // 📋 加载播报栏目开关（拉配置渲染，切到其他 tab 后回来也刷新）
 function loadMainSections(){
   fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).then(function(d){
