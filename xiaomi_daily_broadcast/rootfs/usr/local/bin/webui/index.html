@@ -391,8 +391,9 @@ function renderSections(){
       var v=pair[1];
       var room=(typeof v==='string')?v:(v&&v.room||'');
       var usage=(typeof v==='object'&&v)?(v.usage||''):'';
+      var label=(typeof v==='object'&&v)?(v.label||''):'';
       var ptype=(typeof v==='object'&&v)?(v.power_type||'daily'):'daily';
-      h+=entryHTML(sec, pair[0], room, usage, ptype);
+      h+=entryHTML(sec, pair[0], room, usage, label, ptype);
     });
     h+='</div>';
     h+='<div id="cand-'+sec.key+'"></div>';
@@ -440,14 +441,14 @@ function onSearch(key){
 function pickCandidate(key, eid){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
-  box.insertAdjacentHTML('beforeend', entryHTML(sec, eid, ''));
+  box.insertAdjacentHTML('beforeend', entryHTML(sec, eid, '', '', ''));
   markDirty();
   collectSection(key);
   document.getElementById('cand-'+key).innerHTML='';
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, usage, ptype, editable){
+function entryHTML(sec, eid, room, usage, label, ptype, editable){
   var ph=sec.room?'房间名':'标签';
   // 🔑 editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   // 但只读的已添加实体支持"双击编辑"（去掉 readonly 编辑，失焦恢复）
@@ -492,8 +493,9 @@ function entryHTML(sec, eid, room, usage, ptype, editable){
   return '<div class="entry" data-raw="'+esc(eid)+'">'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
+    +'<input type="text" value="'+esc(label||'')+'" placeholder="播报名" oninput="onRoom(this,\''+sec.key+'\')">'
+    +'<input type="text" value="'+esc(room||'')+'" placeholder="房间名" oninput="onRoom(this,\''+sec.key+'\')">'
     +'<input type="text" value="'+esc(usage||'')+'" placeholder="用途" oninput="onRoom(this,\''+sec.key+'\')">'
-    +'<input type="text" value="'+esc(room||'')+'" placeholder="'+ph+'" oninput="onRoom(this,\''+sec.key+'\')">'
     +typeSel
     +'<button class="del" onclick="delEntry(\''+sec.key+'\',this)">✕</button>'
     +'</div>';
@@ -520,13 +522,14 @@ function collectSection(key){
   box.querySelectorAll('.entry').forEach(function(e){
     var ins=e.querySelectorAll('input');
     var eid=(ins[0]&&ins[0].value||'').trim();
-    var usage=(ins[1]&&ins[1].value||'').trim();
+    var label=(ins[1]&&ins[1].value||'').trim();
     var room=(ins[2]&&ins[2].value||'').trim();
+    var usage=(ins[3]&&ins[3].value||'').trim();
     var ptype='daily';
     var sel=e.querySelector('select');
     if(sel && key==='power_sensors') ptype=sel.value||'daily';
     if(eid){
-      var obj={'room':room,'usage':usage};
+      var obj={'room':room,'usage':usage,'label':label};
       if(key==='power_sensors') obj.power_type=ptype;
       out[eid]=obj;
     }
@@ -539,7 +542,7 @@ function addEntry(key){
   var sec=SECTIONS.filter(function(s){return s.key===key})[0];
   var box=document.getElementById('sec-'+key);
   // 🔑 参数顺序：(sec, eid, room, usage, ptype, editable)——第6个才是 editable！
-  box.insertAdjacentHTML('beforeend', entryHTML(sec,'','','','daily',true));
+  box.insertAdjacentHTML('beforeend', entryHTML(sec,'','','','','daily',true));
   markDirty();
   hideAllCands();
 }
@@ -579,13 +582,12 @@ var TPL_GROUPS=[
     {k:'temp_high_alert',label:'高温报警阈值(度)',ph:'温度超过这个值提醒高温（如 32=32度以上）',def:32,type:'number'},
     {k:'temp_low_alert',label:'低温报警阈值(度)',ph:'温度低于这个值提醒低温（如 10=10度以下）',def:10,type:'number'},
     {k:'temp_constant_diff',label:'恒温温差阈值(度)',ph:'全天温差小于这个值就说"全天X度"（不报高低）',def:1,type:'number'},
-    {k:'temp_exclude_balcony',label:'阳台不参与高温报警',ph:'阳台夏天温度高，勾选后不提醒',def:true,type:'check'},
-    {k:'temp_exclude_rooms',label:'不参与温度报警的房间',ph:'填房间名，多个用顿号隔开。如：厨房、储物间',def:'',type:'text'},
+    {k:'temp_exclude_rooms',label:'不参与温度报警的房间',ph:'填房间名，多个用空格隔开。如：厨房 储物间',def:'',type:'text'},
   ]},
   {title:'湿度',fields:[
     {k:'humidity_dry',label:'干燥阈值(%)',ph:'湿度低于这个值提醒干燥',def:40,type:'number'},
     {k:'humidity_wet',label:'过湿阈值(%)',ph:'湿度高于这个值提醒过湿',def:80,type:'number'},
-    {k:'humidity_exclude_rooms',label:'不参与湿度报警的房间',ph:'填房间名，多个用顿号隔开。如：卫生间',def:'',type:'text'},
+    {k:'humidity_exclude_rooms',label:'不参与湿度报警的房间',ph:'填房间名，多个用空格隔开。如：卫生间',def:'',type:'text'},
   ]},
   {title:'用电',fields:[
     {k:'power_show_threshold',label:'显示"共X度"阈值(kWh)',ph:'今日耗电量超过这个值才播"共X度"，低于则播"非常省电"',def:0.05,type:'number'},

@@ -145,7 +145,8 @@ def load_config():
         if isinstance(_s, dict):
             for _eid, _val in list(_s.items()):
                 if isinstance(_val, dict):
-                    _s[_eid] = {"room": _val.get("room", ""), "usage": _val.get("usage", "")}
+                    _s[_eid] = {"room": _val.get("room", ""), "usage": _val.get("usage", ""),
+                                "label": _val.get("label", "")}
     _norm_segs = ("lights", "doors", "important_devices")
     for _seg in _norm_segs:
         _s = cfg.get(_seg)
@@ -165,6 +166,7 @@ def load_config():
                 _ps[_eid] = {
                     "room": _val.get("room", ""),
                     "usage": _val.get("usage", ""),
+                    "label": _val.get("label", ""),
                     "power_type": _pt,
                 }
     return cfg
@@ -451,31 +453,39 @@ def save_power_integral(date_str, kwh):
 
 
 def _power_label(eid, meta):
-    """用电实体的播报名。🐛 关键：必须 room+usage 组合（如"卧室电源1"），
-    不能只用 room——同房间多个用电实体（卧室电源1/电源2、客厅冰箱/机柜）才会互相覆盖导致漏算。
-    旧配置无 usage 时退回 room 或 eid。"""
+    """用电实体的播报名。优先级：label（用户自定义播报名）> room+usage > room > eid。
+    🐛 同房间多个用电实体（卧室电源1/2）必须区分——用 label 或 room+usage 避免互相覆盖漏算。"""
     if isinstance(meta, dict):
+        label = (meta.get("label") or "").strip()
+        if label:
+            return label
         room = (meta.get("room") or "").strip()
         usage = (meta.get("usage") or "").strip()
         if room and usage:
             return f"{room}{usage}"
         if room:
             return room
+        if usage:
+            return usage
         return eid
     return (meta or eid).strip()
 
 
 def _sensor_label(eid, meta):
-    """温度/湿度等传感器的播报名：room+usage（"客厅冰箱"）。
-    🐛 用途必带——同一个房间可能多个传感器（客厅=客厅冰箱温度 vs 客厅室温），
-    只说"客厅10度"歧义。旧配置无 usage 时退回 room。"""
+    """温度/湿度等传感器的播报名。优先级：label（用户自定义播报名）> room+usage > room > eid。
+    用户可单独填播报名（"冰箱"），或房间+用途（"客厅冰箱"），或只房间/只用途。"""
     if isinstance(meta, dict):
+        label = (meta.get("label") or "").strip()
+        if label:
+            return label
         room = (meta.get("room") or "").strip()
         usage = (meta.get("usage") or "").strip()
         if room and usage:
             return f"{room}{usage}"
         if room:
             return room
+        if usage:
+            return usage
         return eid
     return (meta or eid).strip()
 
@@ -1463,9 +1473,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             temp_high = ts(config, "temp_high_alert", 32)
             temp_low = ts(config, "temp_low_alert", 10)
             temp_diff = ts(config, "temp_constant_diff", 1)
-            excl_balcony = ts(config, "temp_exclude_balcony", True)
-            # 🔑 不参与温度报警的房间（可多个，顿号/逗号分隔）
-            excl_rooms = [r.strip() for r in re.split(r'[，,、\s]+', ts(config, "temp_exclude_rooms", "")) if r.strip()]
+            # 🔑 不参与温度报警的房间（可多个，空格分隔）
+            excl_rooms = [r.strip() for r in re.split(r'\s+', ts(config, "temp_exclude_rooms", "")) if r.strip()]
             for eid, meta in config["temp_sensors"].items():
                 room = meta.get("room", "") if isinstance(meta, dict) else meta
                 label = _sensor_label(eid, meta)  # room+usage（客厅冰箱）
@@ -1484,8 +1493,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                         temp_parts.append(f"{label}当前{cur:.0f}度，全天{lo:.0f}到{hi:.0f}度")
                 else:
                     temp_parts.append(f"{label}当前{cur:.0f}度")
-                # 排除的房间 + 阳台不参与报警（用房间名判断）
-                if any(k in room for k in excl_rooms) or (excl_balcony and "阳台" in room):
+                # 排除的房间不参与报警（用房间名判断）
+                if any(k in room for k in excl_rooms):
                     pass
                 elif cur > temp_high:
                     temp_alerts.append((label, cur))
@@ -1560,7 +1569,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             dry_th = ts(config, "humidity_dry", 40)
             wet_th = ts(config, "humidity_wet", 80)
             # 🔑 不参与湿度报警的房间（卫生间等湿度常高不算异常）
-            hum_excl = [r.strip() for r in re.split(r'[，,、\s]+', ts(config, "humidity_exclude_rooms", "")) if r.strip()]
+            hum_excl = [r.strip() for r in re.split(r'\s+', ts(config, "humidity_exclude_rooms", "")) if r.strip()]
             dry = [lb for lb, h in hums.items() if h < dry_th and not any(k in hum_rooms[lb] for k in hum_excl)]
             wet = [lb for lb, h in hums.items() if h > wet_th and not any(k in hum_rooms[lb] for k in hum_excl)]
             report["humidity_dry"] = dry
