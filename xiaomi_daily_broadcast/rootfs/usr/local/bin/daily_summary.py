@@ -2097,16 +2097,21 @@ async def broadcast_sentences(lines, now, ws, config, text_only, summary_type="d
         # 🔑 逐句：显字幕 → 念 → 等念完 → 下一句
         write_broadcast_state('broadcasting', all_sentences, played_to=0, run_id=run_id,
                               mode='speech', summary_type=summary_type)
-        # 固定播报节奏（tts_speed 已移除，小米 TTS 不支持调语速）：
-        # 每句等待 = 字数/4.5 + 0.5s 句间停顿，至少 1.2s——保证上一句念完才播下一句，不打断
+        # 句间停顿可配（播报页 ⏸️ 下拉，存 template_settings.tts_pause，默认 0.5s）：
+        # 每句等待 = 字数/4.5 + 停顿，下限 = 0.8s + 停顿——保证上一句念完才播下一句，不打断
+        _pause = 0.5
+        try:
+            _pause = float((config.get("template_settings") or {}).get("tts_pause", 0.5))
+        except Exception:
+            pass
         for i, sentence in enumerate(sentences):
             # 1. 字幕先出来
             write_broadcast_state('broadcasting', all_sentences, played_to=i + 1, run_id=run_id,
                                   mode='speech', summary_type=summary_type)
             # 2. 发给音箱念这句
             await speak(ws, sentence, config, cid=9000 + i)
-            # 3. 等这句念完（有下限，不打断）
-            wait = max(len(sentence) / 4.5 + 0.5, 1.2)
+            # 3. 等这句念完（下限跟随停顿，不打断）
+            wait = max(len(sentence) / 4.5 + _pause, 0.8 + _pause)
             await asyncio.sleep(wait)
 
         write_broadcast_state('done', all_sentences, played_to=len(sentences), run_id=run_id,

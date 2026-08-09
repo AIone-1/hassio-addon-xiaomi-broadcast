@@ -120,6 +120,13 @@
         <option value="llm">🤖 大模型</option>
       </select>
       <button id="btnSpeak" onclick="trigger(false)">📢 语音播报</button>
+      <select id="pauseSel" onchange="changePause()" title="播报句间停顿" style="padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:none;height:40px">
+        <option value="0.3">⏸️ 0.3s</option>
+        <option value="0.5" selected>⏸️ 0.5s</option>
+        <option value="0.8">⏸️ 0.8s</option>
+        <option value="1.0">⏸️ 1.0s</option>
+        <option value="1.5">⏸️ 1.5s</option>
+      </select>
       <button id="btnText" onclick="trigger(true)">📝 文字播报</button>
       <button id="btnClear" onclick="clearLog()">🗑️ 清空日志</button>
       <button id="btnEntities" onclick="showEntities()">🔑 传感器实体</button>
@@ -1321,6 +1328,19 @@ function saveMainSection(cb){
     })
     .catch(function(){document.getElementById('secStatus').textContent='❌ 保存失败';});
 }
+// ⏸️ 播报句间停顿：存到配置 template_settings.tts_pause，播报时用
+function changePause(){
+  var v=document.getElementById('pauseSel').value;
+  var ts=CONFIG.template_settings||{};
+  ts.tts_pause=parseFloat(v);
+  CONFIG.template_settings=ts;
+  fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:{template_settings:ts}})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      document.getElementById('status').textContent = d.ok?('✅ 句间停顿已设为 '+v+'s'):'❌ 保存失败';
+    })
+    .catch(function(){document.getElementById('status').textContent='❌ 保存失败';});
+}
 function changeEngine(){
   var mode=document.getElementById('engineSel').value;
   fetch(BASE+'engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode})})
@@ -1599,6 +1619,12 @@ function loadMainSections(){
   fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).then(function(d){
     CONFIG=d||{};
     renderMainSections();
+    // 🔑 读配置的句间停顿，设置下拉选中
+    var pause=(CONFIG.template_settings||{}).tts_pause;
+    if(pause!==undefined){
+      var sel=document.getElementById('pauseSel');
+      if(sel) sel.value=String(pause);
+    }
   }).catch(function(){});
 }
 loadMainSections();
