@@ -88,7 +88,9 @@ def load_config():
         return cfg
 
     # 音箱 / 语速
-    if opt.get("speaker_notify"):
+    # 🔑 配置页保存的音箱（JSON）优先于 options——用户在前端切换音箱应该生效
+    # options 只在 JSON 没有时兜底（首次安装场景）
+    if not cfg.get("speaker_notify") and opt.get("speaker_notify"):
         cfg["speaker_notify"] = opt["speaker_notify"]
     if opt.get("tts_speed") is not None:
         cfg["tts_speed"] = float(opt["tts_speed"])
