@@ -1422,16 +1422,19 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         if ts_on(config, "greeting"):
             _greet_cached = week_day_text(config, "greeting", now.strftime("%Y-%m-%d"))
             if _greet_cached:
-                # 🐛 缓存问候语可能带固定时段（"周六早上好"），晚上播报仍说"早上好"——替换成当前时段
-                # ⚠️ 时段词可能在句中（"周六早上好"），必须 re.search 任意位置，不能只匹配句首（v1.1.32 教训）
-                if re.search(r'早上好|上午好|中午好|下午好|晚上好|凌晨好', _greet_cached):
-                    # 去掉第一个时段词，但保留后面的标点（"周六早上好，周末"→"周六，周末"，不吞逗号）
-                    _g2 = re.sub(r'(早上好|上午好|中午好|下午好|晚上好|凌晨好)', '', _greet_cached, count=1).strip()
+                # 🐛 缓存问候语可能带固定时段（"周六早上好"/"周日的清晨"/"周五的黄昏"），任意时段播都该换当前时段
+                # ⚠️ 时段词可能在句中，必须 re.search 任意位置；变体（清晨/黄昏/午后/夜晚等）也要处理
+                _PERIOD_PAT = r'早上好|上午好|中午好|下午好|晚上好|凌晨好|清晨|早晨|晨曦|午后|黄昏|傍晚|夜晚|夜幕|深夜|清晨'
+                if re.search(_PERIOD_PAT, _greet_cached):
+                    # 去掉第一个时段词，保留后面的标点（"周日的清晨，阳光"→"周日，阳光"，不吞逗号）
+                    _g2 = re.sub(_PERIOD_PAT, '', _greet_cached, count=1).strip()
                     _g2 = re.sub(r'[！!]+', '，', _g2)  # "周六！周末"→"周六，周末"
                     _g2 = re.sub(r'^[，,。\s]+', '', _g2).strip()
+                    # 🐛 "周日的清晨"去时段后剩"周日的，阳光"/"周五的格外温柔"——统一把"周X的"还原成"周X"
+                    _g2 = re.sub(r'(周一|周二|周三|周四|周五|周六|周日)的', r'\1', _g2)
                     lines = [f"{greeting}，{_g2}"] if _g2 else [greeting]
                 else:
-                    # 缓存没有时段词（新生成的不带"早上好"）→ 直接加当前时段
+                    # 缓存没有时段词（新生成的不带时段）→ 直接加当前时段
                     lines = [f"{greeting}，{_greet_cached}"]
             else:
                 lines = [gfmt.format(greeting=greeting, weekday=weekday_names[wd], day_desc=day_desc)]
