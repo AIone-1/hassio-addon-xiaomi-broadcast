@@ -994,13 +994,12 @@ WEBUI_HTML = """<!DOCTYPE html>
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
   /* 🔑 播报页控件统一样式：14px、40px 高、圆角8px */
-  /* 语音/文字/清空/实体按钮：纯白色底（不管主题），深色文字，选中态蓝底 */
-  .row button,.row select{font-size:14px;height:40px;border-radius:8px}
-  .row button{background:#ffffff;color:#24292f;border:1px solid #d0d7de;padding:0 14px;line-height:1}
-  .row button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-  .row select{background:var(--bg-inset);color:#58a6ff;border:1px solid var(--border);padding:0 10px}
+  /* 播报页控件统一：按钮和下拉同一白底、黑色文字（二级菜单按钮/切换按钮文字黑色） */
+  .row button,.row select{font-size:14px;height:40px;border-radius:8px;background:#ffffff!important;color:#24292f!important;border:1px solid #d0d7de;padding:0 14px;line-height:1}
+  .row select{color:#24292f!important;padding:0 10px}
+  .row button.active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
-  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
+  #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent)!important;border:1px solid var(--accent);color:#fff!important}
   #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
