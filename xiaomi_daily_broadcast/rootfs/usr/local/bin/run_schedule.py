@@ -699,6 +699,29 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/history/day":
             date_str = q.get("date", [""])[0]
             self._send(200, json.dumps(history_day(date_str), ensure_ascii=False), "application/json")
+        elif path == "/history/delete":
+            # 🗑️ 删除某条历史记录（date+ts 匹配）
+            try:
+                date_str = q.get("date", [""])[0]
+                ts = q.get("ts", [""])[0]
+                if HISTORY_FILE.exists():
+                    lines = HISTORY_FILE.read_text().splitlines()
+                    keep = []
+                    for line in lines:
+                        try:
+                            r = json.loads(line)
+                        except Exception:
+                            keep.append(line)
+                            continue
+                        if r.get("date") == date_str and r.get("ts") == ts:
+                            continue  # 删除这条
+                        keep.append(line)
+                    HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
+                    self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
+                else:
+                    self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/history/anomalies":
             # ⚠️ 检测异常传感器数据：某设备单日耗电超阈值（正常家庭不可能）→ 标记该天为异常
             try:
@@ -1003,7 +1026,7 @@ WEBUI_HTML = """<!DOCTYPE html>
   .cal-cell.selected{background:var(--accent);color:#fff}
   .cal-cell.selected .dot{background:#fff}
   .cal-cell.anom{color:#f85149}
-  .cal-cell.anom .warn{font-size:10px;position:absolute;top:2px;right:3px}
+  .cal-cell.anom .warn{font-size:9px;margin-left:1px;line-height:1}
   .cal-cell.selected .warn{filter:brightness(2)}
   .hist-entry{padding:10px 12px;margin-bottom:6px;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer}
   .hist-entry:active{opacity:.8}
@@ -2484,9 +2507,11 @@ function histRenderCal(){
     var has=histDays[ds];
     var isAnom=histAnomalies[ds];
     var cls='cal-cell'+(has?' has':'')+(isAnom?' anom':'')+(ds===todayStr?' today':'')+(ds===histSel?' selected':'');
-    // 有异常的日期显示 ⚠️ 感叹号（替代圆点）
-    h+='<div class="'+cls+'" onclick="histPick(\\''+ds+'\\')" title="'+(isAnom?('⚠️ 传感器异常：'+histAnomalies[ds].join('、')):'')+'">'+d
-      +(isAnom?'<span class="warn">⚠️</span>':(has?'<span class="dot"></span>':''))+'</div>';
+    // 🔑 异常标识 ⚠️ 放在日期后面紧挨着（有记录时在圆点前，一眼看到这天有问题）
+    var mark = isAnom
+      ? '<span class="warn">⚠️</span>'
+      : (has ? '<span class="dot"></span>' : '');
+    h+='<div class="'+cls+'" onclick="histPick(\\''+ds+'\\')" title="'+(isAnom?('⚠️ 传感器异常：'+histAnomalies[ds].join('、')):'')+'">'+d+mark+'</div>';
   }
   document.getElementById('histCal').innerHTML=h;
 }
@@ -2516,14 +2541,34 @@ function histPick(ds){
     h+='</div>';
     entries.forEach(function(e,i){
       var t=e.type||'daily';
-      h+='<div class="hist-entry" onclick="histView(\\''+ds+'\\','+i+')">';
-      h+='<div class="t">'+e.ts+' <span class="type-badge '+tc[t]+'">'+tb[t]+'</span></div>';
+      // 🔑 每条历史：点击看详情，点 ✕ 删除，右键也删除
+      h+='<div class="hist-entry" onclick="histView(\\''+ds+'\\','+i+')" oncontextmenu="event.preventDefault();histDelete(\\''+ds+'\\','+i+');return false;">';
+      h+='<div class="t" style="display:flex;align-items:center;justify-content:space-between">';
+      h+='<span>'+e.ts+' <span class="type-badge '+tc[t]+'">'+tb[t]+'</span></span>';
+      h+='<button class="del" onclick="event.stopPropagation();histDelete(\\''+ds+'\\','+i+');" title="删除这条记录">✕</button>';
+      h+='</div>';
       h+='<div class="x">'+esc(e.text||'')+'</div>';
       h+='<div class="b">'+e.count+'句 ›</div>';
       h+='</div>';
     });
     list.innerHTML=h;
   }).catch(function(){list.innerHTML='<div style="color:var(--red)">加载失败</div>';});
+}
+// 🗑️ 删除某条历史记录（按日期+时间戳唯一）
+function histDelete(ds,idx){
+  if(!confirm('确定删除这条播报记录吗？')) return;
+  fetch(BASE+'history/day?date='+ds+'&_='+Date.now()).then(function(r){return r.json()}).then(function(entries){
+    var e=entries[idx];
+    if(!e) return;
+    var ts=e.ts;
+    fetch(BASE+'history/delete?date='+ds+'&ts='+encodeURIComponent(ts),{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+      if(d.ok){
+        // 刷新当天列表 + 日历（若当天没记录了，移除日历圆点）
+        histPick(ds);
+        histLoadCal();
+      }
+    }).catch(function(){});
+  });
 }
 function histView(ds,idx){
   var list=document.getElementById('histList');
