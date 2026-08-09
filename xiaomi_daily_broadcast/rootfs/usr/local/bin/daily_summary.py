@@ -368,7 +368,7 @@ def apply_section_filters(report, config):
     if not ts_on(config, "task"):
         ps = report.get("period_stats")
         if ps:
-            ps["tasks"] = {"total": 0, "days": 0, "avg_daily": 0}
+            ps.pop("tasks", None)  # 🔑 彻底删除，LLM 看不到任务就不会编"没有记录任务完成次数"
     for field, sec in _map.items():
         if not ts_on(config, sec):
             if isinstance(report.get(field), list):
@@ -952,13 +952,13 @@ def generate_with_llm(report, config):
         if _enc_on and _end_on:
             pass  # 默认：鼓励语 + 播报结束
         elif _enc_on:
-            system_prompt = system_prompt.replace("4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
+            system_prompt = system_prompt.replace("5. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
                                                   "4. 结尾给一句温暖的鼓励语\n")
         elif _end_on:
-            system_prompt = system_prompt.replace("4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
+            system_prompt = system_prompt.replace("5. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
                                                   "4. 最后一句固定说播报结束\n")
         else:
-            system_prompt = system_prompt.replace("4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
+            system_prompt = system_prompt.replace("5. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n",
                                                   "4. 结尾自然收束\n")
         user_msg = (
             f"现在是{report['time']['weekday']}{report['time']['period']}，"
@@ -1158,6 +1158,26 @@ def _avg(vals):
     return sum(vals) / len(vals) if vals else None
 
 
+# 🔑 冰箱等非室内温度传感器：usage/label 含"冰箱"→ 该传感器的 room/label 不参与周期温度统计
+_FRIDGE_KW = ("冰箱", "冰柜", "fridge")
+
+
+def _fridge_rooms(config):
+    """返回应从周期温度/湿度统计排除的房间名集合（冰箱传感器 room/label/usage）"""
+    exc = set()
+    for eid, meta in (config.get("temp_sensors") or {}).items():
+        if isinstance(meta, dict):
+            u = (meta.get("usage") or "") + (meta.get("label") or "")
+            if any(k in u.lower() if k == "fridge" else k in u for k in _FRIDGE_KW):
+                if meta.get("room"):
+                    exc.add(meta["room"])
+                if meta.get("label"):
+                    exc.add(meta["label"])
+                if meta.get("usage"):
+                    exc.add(meta["usage"])
+    return exc
+
+
 def aggregate_period(summary_type, now, config):
     """聚合周期统计。返回 period_stats dict（含覆盖度，用于优雅降级）。"""
     start, end = period_start(summary_type, now), now.date()
@@ -1172,11 +1192,14 @@ def aggregate_period(summary_type, now, config):
     if not days:
         return {"days_total": days_total, "days_recorded": 0, "backfilled_days": backfilled}
 
-    # ── 温度 ──
+    # ── 温度（排除冰箱传感器，不算室内温度）──
+    fridge_exc = _fridge_rooms(config)
     rooms = {}
     all_high, all_low, all_max_high, all_min_low = [], [], [], []
     for s in days:
         for room, t in s.get("temp", {}).items():
+            if room in fridge_exc or any(k in room for k in ("冰箱", "冰柜")):
+                continue  # 🔑 冰箱等非室内温度不计入
             r = rooms.setdefault(room, {"highs": [], "lows": [], "nows": []})
             if "high" in t: r["highs"].append(t["high"])
             if "low" in t: r["lows"].append(t["low"])
@@ -1217,6 +1240,8 @@ def aggregate_period(summary_type, now, config):
     humidity_by_room = {}
     for s in days:
         for room, v in s.get("humidity", {}).items():
+            if room in fridge_exc or any(k in room for k in ("冰箱", "冰柜")):
+                continue  # 🔑 冰箱等非室内湿度不计入
             humidity_by_room.setdefault(room, []).append(v)
 
     return {
@@ -1224,6 +1249,7 @@ def aggregate_period(summary_type, now, config):
         "days_recorded": len(days),
         "backfilled_days": backfilled,
         "temp": {"overall": temp_overall, "by_room": temp_by_room},
+        "humidity": {r: round(_avg(vs), 1) for r, vs in humidity_by_room.items()},
         "power": {
             "total_kwh": round(sum(kwh_days), 1) if kwh_days else 0.0,
             "avg_daily": round(_avg(kwh_days), 2) if kwh_days else None,
@@ -1235,7 +1261,6 @@ def aggregate_period(summary_type, now, config):
         "pm25": {"avg": round(_avg(pm25_vals), 1) if pm25_vals else None,
                  "days": len(pm25_vals), "days_over_100": pm25_over100},
         "lights": {"days_recorded": len(light_days), "days_all_off": all_off_days},
-        "humidity": {r: round(_avg(vs), 1) for r, vs in humidity_by_room.items()},
         "memos_active_now": memos_now,
         "doors_open_days": doors_days,
         "faults_days": faults_days,
@@ -1261,6 +1286,11 @@ def build_period_text(summary_type, ps, now, config):
     t = ps["temp"]["overall"]
     if t:
         lines.append(f"{period_label}平均最高温{t['avg_high']:.0f}度，平均最低{t['avg_low']:.0f}度，最热到过{t['max_high']:.0f}度。")
+
+    # 🔑 环境放一起：温度后紧跟各房间湿度
+    if ps.get("humidity"):
+        _hp = "，".join(f"{r}{v:.0f}%" for r, v in ps["humidity"].items())
+        lines.append(f"湿度：{_hp}。")
 
     p = ps["power"]
     if p["days"]:
@@ -1322,12 +1352,13 @@ PERIOD_SYSTEM_PROMPT = (
     "你是家里的小爱音箱播报助手。根据用户提供的周期汇总数据，生成一段自然、亲切、口语化的中文周期总结播报稿。\n"
     "要求：\n"
     "1. 开头用\"这周/这个月/这一年家里……\"的句式，明确这是周期总结，不是每日播报\n"
-    "2. 自然带出：温度均值与最热最冷、用电总量与日均及耗电排行、任务完成数、空气与灯光亮点、异常提醒\n"
-    "3. 数据里有 days_recorded 和 days_total，如果记录的日期少于总天数，必须诚实带过（如\"这周只记录了几天数据，可能不够完整\"），不许假装完整\n"
-    "4. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n"
-    "5. 全文150到280字，分成6到12句，每句独立成行，句号结尾，不要多余空行\n"
-    "6. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\n"
-    "7. 适合语音朗读：不要括号、列表序号、表情符号、英文\n"
+    "2. 板块顺序固定：先把环境放一起——温度均值与最热最冷、各房间湿度紧接着说；然后单独说用电（总量与日均及耗电排行）；之后再报空气质量、灯光、门窗、设备等亮点与异常提醒\n"
+    "3. 数据里没有的板块不要编造也不要提（如数据里没有任务完成数，就绝口不提任务）\n"
+    "4. 数据里有 days_recorded 和 days_total，如果记录的日期少于总天数，必须诚实带过（如\"这周只记录了几天数据，可能不够完整\"），不许假装完整\n"
+    "5. 结尾给一句温暖的鼓励语，最后一句固定说播报结束\n"
+    "6. 全文150到280字，分成6到12句，每句独立成行，句号结尾，不要多余空行\n"
+    "7. 只输出播报稿本身，不要任何解释、前缀、引号或Markdown\n"
+    "8. 适合语音朗读：不要括号、列表序号、表情符号、英文\n"
 )
 
 

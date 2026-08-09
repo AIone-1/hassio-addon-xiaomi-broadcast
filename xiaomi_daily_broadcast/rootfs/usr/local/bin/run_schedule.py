@@ -22,6 +22,40 @@ LOG_TAIL = []           # 内存日志环形缓冲（最近 200 条）
 LOG_MAX = 200
 STATE_FILE = Path("/data/broadcast_state.json")
 HISTORY_FILE = Path("/share/xiaomi_broadcast/broadcast_history.jsonl")
+UNDO_FILE = Path("/data/undo_history.jsonl")
+REDO_FILE = Path("/data/redo_history.jsonl")
+MAX_STACK = 50  # 撤销/恢复栈上限，超过丢最旧的
+
+
+def _push_stack(path, record):
+    """往撤销/恢复栈追加一条记录，超过 MAX_STACK 丢最旧的（保持栈顶=最近）"""
+    try:
+        if path.exists():
+            lines = path.read_text().splitlines()
+        else:
+            lines = []
+        lines.append(json.dumps(record, ensure_ascii=False))
+        if len(lines) > MAX_STACK:
+            lines = lines[-MAX_STACK:]
+        path.write_text("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+
+def _pop_stack(path):
+    """取栈顶记录并从栈移除；返回记录 dict 或 None"""
+    try:
+        if path.exists():
+            lines = path.read_text().splitlines()
+        else:
+            lines = []
+        if not lines:
+            return None
+        record = json.loads(lines[-1])
+        path.write_text("\n".join(lines[:-1]) + ("\n" if len(lines) > 1 else ""))
+        return record
+    except Exception:
+        return None
 
 
 def load_history():
@@ -799,16 +833,11 @@ class Handler(BaseHTTPRequestHandler):
                             continue  # 删除这条
                         keep.append(line)
                     HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
-                    # 🔑 存撤销栈（/data/undo_history.jsonl，栈顶=最近删除）
+                    # 🔑 存撤销栈（栈顶=最近删除）；新删除清空 redo 栈（标准撤销语义）
                     if deleted:
+                        _push_stack(UNDO_FILE, deleted)
                         try:
-                            undo_file = Path("/data/undo_history.jsonl")
-                            if undo_file.exists():
-                                undo_lines = undo_file.read_text().splitlines()
-                            else:
-                                undo_lines = []
-                            undo_lines.append(json.dumps(deleted, ensure_ascii=False))
-                            undo_file.write_text("\n".join(undo_lines) + "\n")
+                            REDO_FILE.unlink(missing_ok=True)
                         except Exception:
                             pass
                     self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
@@ -819,46 +848,26 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/history/restore":
             # ↩ 撤销：从撤销栈恢复最近一条被删的记录（不依赖前端）
             try:
-                undo_file = Path("/data/undo_history.jsonl")
-                if not undo_file.exists():
+                record = _pop_stack(UNDO_FILE)   # 栈顶=最近删除
+                if not record:
                     self._send(200, json.dumps({"ok": False, "error": "无撤销记录"}), "application/json")
                     return
-                undo_lines = undo_file.read_text().splitlines()
-                if not undo_lines:
-                    self._send(200, json.dumps({"ok": False, "error": "无撤销记录"}), "application/json")
-                    return
-                record = json.loads(undo_lines[-1])   # 栈顶=最近删除
                 # 写回历史
                 with open(HISTORY_FILE, "a") as f:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                # 移除撤销栈顶 + 存入 redo 栈（可恢复删除）
-                undo_file.write_text("\n".join(undo_lines[:-1]) + ("\n" if len(undo_lines) > 1 else ""))
-                try:
-                    redo_file = Path("/data/redo_history.jsonl")
-                    if redo_file.exists():
-                        redo_lines = redo_file.read_text().splitlines()
-                    else:
-                        redo_lines = []
-                    redo_lines.append(json.dumps(record, ensure_ascii=False))
-                    redo_file.write_text("\n".join(redo_lines) + "\n")
-                except Exception:
-                    pass
+                # 存入 redo 栈（可恢复删除）
+                _push_stack(REDO_FILE, record)
                 self._send(200, json.dumps({"ok": True, "msg": f"已恢复 {record.get('date','')} {record.get('ts','')} 的记录"}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/history/undo-del":
-            # ↪ 恢复（redo）：撤销后把记录重新删掉（等价再删一次），记录进 redo 栈
+            # ↪ 恢复（redo）：撤销后把记录重新删掉（等价再删一次），并重新进 undo 栈（可再撤销）
             try:
-                redo_file = Path("/data/redo_history.jsonl")
-                if redo_file.exists():
-                    redo_lines = redo_file.read_text().splitlines()
-                else:
-                    redo_lines = []
-                record = None
-                if redo_lines:
-                    record = json.loads(redo_lines[-1])
-                    redo_file.write_text("\n".join(redo_lines[:-1]) + ("\n" if len(redo_lines) > 1 else ""))
-                if record and HISTORY_FILE.exists():
+                record = _pop_stack(REDO_FILE)   # 栈顶=最近撤销
+                if not record:
+                    self._send(200, json.dumps({"ok": False, "error": "无恢复记录"}), "application/json")
+                    return
+                if HISTORY_FILE.exists():
                     lines = HISTORY_FILE.read_text().splitlines()
                     keep = []
                     for line in lines:
@@ -871,9 +880,11 @@ class Handler(BaseHTTPRequestHandler):
                             continue  # 删除这条
                         keep.append(line)
                     HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
+                    # 🔑 重新删除 = 一次新删除，记录重新进 undo 栈（撤销→恢复→再撤销 循环可用）
+                    _push_stack(UNDO_FILE, record)
                     self._send(200, json.dumps({"ok": True, "msg": f"已重新删除 {record.get('date','')} {record.get('ts','')} 的记录"}), "application/json")
                 else:
-                    self._send(200, json.dumps({"ok": False, "error": "无恢复记录"}), "application/json")
+                    self._send(200, json.dumps({"ok": False, "error": "无历史文件"}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/fix-anomaly":
