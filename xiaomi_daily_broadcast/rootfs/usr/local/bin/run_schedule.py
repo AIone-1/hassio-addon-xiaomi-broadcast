@@ -841,6 +841,7 @@ WEBUI_HTML = """<!DOCTYPE html>
   .eng-input:focus{border-color:var(--accent);outline:none}
   .eng-check{display:flex;align-items:center;gap:6px;padding:5px 0;font-size:13px;color:var(--text)}
   .eng-check input{width:16px;height:16px;flex:0 0 auto}
+  .fmt-hint{font-size:11px;color:var(--faint);margin:-2px 0 4px;line-height:1.5}
   .sec-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;margin-bottom:4px}
   .sec-title-row .sec-title{margin-top:0;margin-bottom:0}
   .ref-btn{background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--accent2);padding:2px 9px;font-size:12px;cursor:pointer;line-height:1.5;flex:0 0 auto;transition:opacity .2s}
@@ -884,7 +885,8 @@ WEBUI_HTML = """<!DOCTYPE html>
 </head>
 <body data-theme="dark">
 <h1 style="display:flex;align-items:center;gap:8px">🎙️ 小爱每日播报
-  <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="margin-left:auto;padding:6px 12px;font-size:12px">☀️ 日间</button>
+  <button class="ghost" id="fsBtn" onclick="toggleFullscreen()" style="margin-left:auto;padding:6px 12px;font-size:12px">⛶ 全屏</button>
+  <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="padding:6px 12px;font-size:12px">☀️ 日间</button>
 </h1>
 <div class="tabs">
   <div class="tab on" id="tabMain" onclick="showPage('main')">📢 播报</div>
@@ -973,6 +975,26 @@ WEBUI_HTML = """<!DOCTYPE html>
 // 必须用相对路径（基于 location.pathname）而不是写死 /，否则请求打到 HA 主 API
 var BASE = location.pathname.replace(/\\/[^/]*$/, '/');
 
+/* ─── 全屏 ─── */
+function toggleFullscreen(){
+  var fsBtn=document.getElementById('fsBtn');
+  if(document.fullscreenElement || document.webkitFullscreenElement){
+    if(document.exitFullscreen) document.exitFullscreen();
+    else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }else{
+    var el=document.documentElement;
+    if(el.requestFullscreen) el.requestFullscreen();
+    else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  }
+}
+document.addEventListener('fullscreenchange', function(){
+  var fsBtn=document.getElementById('fsBtn');
+  if(fsBtn) fsBtn.textContent=(document.fullscreenElement||document.webkitFullscreenElement)?'⛶ 退出全屏':'⛶ 全屏';
+});
+document.addEventListener('webkitfullscreenchange', function(){
+  var fsBtn=document.getElementById('fsBtn');
+  if(fsBtn) fsBtn.textContent=(document.fullscreenElement||document.webkitFullscreenElement)?'⛶ 退出全屏':'⛶ 全屏';
+});
 /* ─── 主题（白天/夜晚）─── */
 function setTheme(t){
   document.body.setAttribute('data-theme',t);
@@ -1387,28 +1409,28 @@ var TPL_GROUPS=[
     {k:'fault_offline_days',label:'离线提醒时间窗(天)',def:3,type:'number'},
   ]},
   {title:'句式',open:false,fields:[
-    {k:'fmt_temp_prefix',label:'温度·开头',ph:'如 温度：',def:'温度：',type:'text'},
-    {k:'fmt_temp_item',label:'温度·每条',ph:'{room}=房间 {now}=当前 {low}=最低 {high}=最高，如 {room}现在{now}度',def:'',type:'text'},
-    {k:'fmt_temp_alert',label:'温度·高温提醒',ph:'{room} {now}，如 {room}有点热',def:'',type:'text'},
-    {k:'fmt_humidity_prefix',label:'湿度·开头',ph:'如 湿度：',def:'湿度：',type:'text'},
-    {k:'fmt_humidity_item',label:'湿度·每条',ph:'{room}=房间 {hum}=湿度，如 {room}是{hum}%',def:'',type:'text'},
-    {k:'fmt_humidity_dry',label:'湿度·干燥',ph:'{room}，如 {room}干',def:'',type:'text'},
-    {k:'fmt_humidity_wet',label:'湿度·过湿',ph:'{room}，如 {room}湿',def:'',type:'text'},
-    {k:'fmt_power_prefix',label:'耗电·开头',ph:'{total}=总量，如 共{total}度',def:'耗电量：共{total}度',type:'text'},
-    {k:'fmt_power_top',label:'耗电·排名引导',ph:'{num}=名次 {list}=列表，如 耗电前{num}：{list}',def:'耗电前{num}：{list}',type:'text'},
-    {k:'fmt_power_top_item',label:'耗电·排名每条',ph:'{device}=设备 {kwh}=度，如 {device}耗电{kwh}度',def:'',type:'text'},
-    {k:'fmt_power_unread',label:'耗电·读不到',ph:'{count}=个数 {items}=设备，如 {count}个设备没读到',def:'',type:'text'},
-    {k:'fmt_power_now_prefix',label:'功率·开头',ph:'如 实时功率：',def:'实时功率：',type:'text'},
-    {k:'fmt_power_now_item',label:'功率·每条',ph:'{device}=设备 {w}=瓦，如 {device}{w}瓦',def:'',type:'text'},
-    {k:'fmt_power_now_alert',label:'功率·高功耗',ph:'{device} {w}，如 {device}功率较高',def:'',type:'text'},
-    {k:'fmt_lights_prefix',label:'灯光·开头',ph:'如 灯光：',def:'灯光：',type:'text'},
-    {k:'fmt_lights_item',label:'灯光·每条',ph:'{name}=灯名',def:'',type:'text'},
-    {k:'fmt_lights_suffix',label:'灯光·结尾',ph:'如 还亮着，不需要的话可以关掉',def:'',type:'text'},
-    {k:'fmt_security',label:'安全巡检',ph:'{items}=巡检内容',def:'安全巡检：{items}',type:'text'},
-    {k:'fmt_pm25',label:'空气质量',ph:'{pm}=PM描述',def:'空气质量：{pm}',type:'text'},
-    {k:'fmt_task',label:'任务',ph:'{count}=任务数 {extra}=档位',def:'任务：完成{count}个终端任务{extra}',type:'text'},
-    {k:'fmt_todo',label:'待办',ph:'{items}=待办列表',def:'待办与备忘：{items}',type:'text'},
-    {k:'fmt_fault',label:'设备故障',ph:'{count}=台数 {items}=设备',def:'有{count}台设备离线：{items}，有空检查一下',type:'text'},
+    {k:'fmt_temp_prefix',label:'温度·开头',ph:'示例：温度：',def:'温度：',type:'text'},
+    {k:'fmt_temp_item',label:'温度·每条',ph:'{room}房间 {now}当前 {low}最低 {high}最高。示例：{room}现在{now}度，全天{low}到{high}度',def:'{room}当前{now}度，全天{low}到{high}度',type:'text'},
+    {k:'fmt_temp_alert',label:'温度·高温提醒',ph:'{room}房间 {now}温度。示例：{room}有点热',def:'{room}{now}度偏高',type:'text'},
+    {k:'fmt_humidity_prefix',label:'湿度·开头',ph:'示例：湿度：',def:'湿度：',type:'text'},
+    {k:'fmt_humidity_item',label:'湿度·每条',ph:'{room}房间 {hum}湿度。示例：{room}是{hum}%',def:'{room}{hum}%',type:'text'},
+    {k:'fmt_humidity_dry',label:'湿度·干燥',ph:'{room}房间。示例：{room}干',def:'{room}比较干燥',type:'text'},
+    {k:'fmt_humidity_wet',label:'湿度·过湿',ph:'{room}房间。示例：{room}湿',def:'{room}湿度偏高',type:'text'},
+    {k:'fmt_power_prefix',label:'耗电·开头',ph:'{total}总量。示例：耗电量：共{total}度',def:'耗电量：共{total}度',type:'text'},
+    {k:'fmt_power_top',label:'耗电·排名引导',ph:'{num}名次 {list}列表。示例：耗电前{num}：{list}',def:'耗电前{num}：{list}',type:'text'},
+    {k:'fmt_power_top_item',label:'耗电·排名每条',ph:'{device}设备 {kwh}度。示例：{device}耗电{kwh}度',def:'{device}耗电{kwh}度',type:'text'},
+    {k:'fmt_power_unread',label:'耗电·读不到',ph:'{count}个数 {items}设备。示例：另有{count}个设备没读到（{items}）',def:'另有{count}个用电设备读不到数据（{items}），未计入',type:'text'},
+    {k:'fmt_power_now_prefix',label:'功率·开头',ph:'示例：实时功率：',def:'实时功率：',type:'text'},
+    {k:'fmt_power_now_item',label:'功率·每条',ph:'{device}设备 {w}瓦。示例：{device}有{w}瓦',def:'{device} {w}瓦',type:'text'},
+    {k:'fmt_power_now_alert',label:'功率·高功耗',ph:'{device}设备 {w}瓦。示例：{device}功率较高',def:'{device} {w}瓦功率较高，不用时可以关掉',type:'text'},
+    {k:'fmt_lights_prefix',label:'灯光·开头',ph:'示例：灯光：',def:'灯光：',type:'text'},
+    {k:'fmt_lights_item',label:'灯光·每条',ph:'{name}灯名。示例：{name}',def:'{name}',type:'text'},
+    {k:'fmt_lights_suffix',label:'灯光·结尾',ph:'示例：还亮着，不需要的话可以关掉',def:'还亮着，不需要的话可以关掉',type:'text'},
+    {k:'fmt_security',label:'安全巡检',ph:'{items}巡检内容。示例：安全巡检：{items}',def:'安全巡检：{items}',type:'text'},
+    {k:'fmt_pm25',label:'空气质量',ph:'{pm}PM描述。示例：空气质量：{pm}',def:'空气质量：{pm}',type:'text'},
+    {k:'fmt_task',label:'任务',ph:'{count}任务数 {extra}档位。示例：任务：完成{count}个终端任务{extra}',def:'任务：完成{count}个终端任务{extra}',type:'text'},
+    {k:'fmt_todo',label:'待办',ph:'{items}待办列表。示例：待办与备忘：{items}',def:'待办与备忘：{items}',type:'text'},
+    {k:'fmt_fault',label:'设备故障',ph:'{count}台数 {items}设备。示例：有{count}台设备离线：{items}，有空检查一下',def:'有{count}台设备离线：{items}，有空检查一下',type:'text'},
   ]},
   {title:'板块开关',fields:[
     {k:'sec_greeting',label:'问候语',def:true,type:'check'},
@@ -1494,7 +1516,9 @@ function renderTplCfg(){
           h+='<textarea class="eng-input" data-tpl="'+f.k+'" style="min-height:50px">'+esc(val)+'</textarea>';
         }else{
           h+='<label class="eng-label">'+f.label+'</label>';
-          h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'"'+(f.ph?' placeholder="'+esc(f.ph)+'"':'')+'>';
+          // 🔑 教程说明用灰色小字写在输入框上方；输入框 value 就是默认格式，点一下直接改
+          if(f.ph) h+='<div class="fmt-hint">'+esc(f.ph)+'</div>';
+          h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'">';
         }
       });
       h+='</div>';
@@ -1658,15 +1682,17 @@ function saveTpl(){
       else if(el.type==='number'){ ts[k]=parseFloat(el.value); }
       else if(k.indexOf('fmt_')===0){
         // 🔑 fmt_<key>_<sub> → formats.<key>.<sub>（字段级 dict）；fmt_<key> → formats.<key>（整条）
+        // 空值不存（留空=后端默认），避免存一堆默认格式
         if(!ts.formats) ts.formats={};
         var _rest=k.slice(4);
         var _us=_rest.lastIndexOf('_');
+        var _val=(el.value||'').trim();
         if(_us>0){
           var _k=_rest.slice(0,_us), _s=_rest.slice(_us+1);
           if(!ts.formats[_k] || typeof ts.formats[_k]!=='object') ts.formats[_k]={};
-          ts.formats[_k][_s]=el.value;
+          if(_val) ts.formats[_k][_s]=_val; else delete ts.formats[_k][_s];
         }else{
-          ts.formats[_rest]=el.value;
+          if(_val) ts.formats[_rest]=_val; else delete ts.formats[_rest];
         }
       }
       else{ ts[k]=el.value; }
