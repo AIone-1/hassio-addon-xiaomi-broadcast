@@ -837,6 +837,9 @@ WEBUI_HTML = """<!DOCTYPE html>
   .drag-handle{cursor:grab;color:var(--dim);font-size:14px;user-select:none;flex:0 0 auto}
   .entry[draggable=true] input{cursor:default}
   .entry.drag-over{border-color:var(--accent)}
+  .mute-btn{background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--dim);cursor:pointer;font-size:14px;padding:2px 7px;flex:0 0 auto;line-height:1.5}
+  .mute-btn.muted{background:var(--bg-inset);border-color:var(--red);opacity:.7}
+  .entry.muted-row{opacity:.55}
   .sec-title{font-size:13px;font-weight:600;color:var(--title);margin-bottom:4px}
   /* 🔑 模板配置页字段：label 一行、输入框一行占满，简洁紧凑 */
   .eng-label{display:block;font-size:12px;color:var(--dim);margin:8px 0 4px}
@@ -1199,7 +1202,8 @@ function renderSections(){
       var usage=(typeof v==='object'&&v)?(v.usage||''):'';
       var label=(typeof v==='object'&&v)?(v.label||''):'';
       var ptype=(typeof v==='object'&&v)?(v.power_type||'daily'):'daily';
-      h+=entryHTML(sec, pair[0], room, usage, label, ptype);
+      var muted=(typeof v==='object'&&v)?(v.muted===true):false;
+      h+=entryHTML(sec, pair[0], room, usage, label, ptype, false, muted);
     });
     h+='</div>';
     h+='<div id="cand-'+sec.key+'"></div>';
@@ -1254,7 +1258,7 @@ function pickCandidate(key, eid){
   var si=document.getElementById('search-'+key); if(si) si.value='';
 }
 
-function entryHTML(sec, eid, room, usage, label, ptype, editable){
+function entryHTML(sec, eid, room, usage, label, ptype, editable, muted){
   var ph=sec.room?'房间名':'标签';
   // 🔑 editable=true：手动添加，第一个框可编辑填实体 id；否则只读（候选添加）
   // 但只读的已添加实体支持"双击编辑"（去掉 readonly 编辑，失焦恢复）
@@ -1297,7 +1301,7 @@ function entryHTML(sec, eid, room, usage, label, ptype, editable){
   // 🔑 状态徽章：所有 section 统一宽度(height 34px 同输入框, min-width 96px 显示更全面如"93.5 / 5.2")，布局整齐一致
   var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:96px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 10px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
   // 🔑 拖拽排序：每行可拖动改变顺序（决定播报顺序）
-  return '<div class="entry" data-raw="'+esc(eid)+'" draggable="true" ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="dragDrop(event,\\''+sec.key+'\\')" ondragend="dragEnd(event)">'
+  return '<div class="entry'+(muted?' muted-row':'')+'" data-raw="'+esc(eid)+'" draggable="true" ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="dragDrop(event,\\''+sec.key+'\\')" ondragend="dragEnd(event)">'
     +'<span class="drag-handle" title="拖动排序">⠿</span>'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
@@ -1305,6 +1309,7 @@ function entryHTML(sec, eid, room, usage, label, ptype, editable){
     +'<input type="text" value="'+esc(room||'')+'" placeholder="房间名" oninput="onRoom(this,\\''+sec.key+'\\')">'
     +'<input type="text" value="'+esc(usage||'')+'" placeholder="用途" oninput="onRoom(this,\\''+sec.key+'\\')">'
     +typeSel
+    +'<button class="mute-btn'+(muted?' muted':'')+'" onclick="toggleMute(this,\\''+sec.key+'\\')" title="'+(muted?'已屏蔽，点击恢复':'屏蔽，不参与播报')+'">'+(muted?'🔇':'🔔')+'</button>'
     +'<button class="del" onclick="delEntry(\\''+sec.key+'\\',this)">✕</button>'
     +'</div>';
 }
@@ -1338,6 +1343,8 @@ function collectSection(key){
     if(sel && key==='power_sensors') ptype=sel.value||'daily';
     if(eid){
       var obj={'room':room,'usage':usage,'label':label};
+      var mbtn=e.querySelector('.mute-btn');
+      if(mbtn && mbtn.classList.contains('muted')) obj.muted=true;
       if(key==='power_sensors') obj.power_type=ptype;
       out[eid]=obj;
     }
@@ -1779,6 +1786,17 @@ function onRoom(el,key){ markDirty(); collectSection(key); }
 function delEntry(key,btn){
   var entry=btn.closest('.entry');
   if(entry) entry.remove();
+  markDirty();
+  collectSection(key);
+}
+// 🔑 屏蔽/恢复传感器：屏蔽后不参与播报（保留在配置里）。存 muted 字段
+function toggleMute(btn,key){
+  var entry=btn.closest('.entry');
+  var muted=!btn.classList.contains('muted');
+  btn.classList.toggle('muted',muted);
+  if(muted) entry.classList.add('muted-row'); else entry.classList.remove('muted-row');
+  btn.textContent=muted?'🔇':'🔔';
+  btn.title=muted?'已屏蔽，点击恢复':'屏蔽，不参与播报';
   markDirty();
   collectSection(key);
 }

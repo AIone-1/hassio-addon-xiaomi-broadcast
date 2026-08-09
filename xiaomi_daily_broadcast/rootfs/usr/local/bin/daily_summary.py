@@ -492,6 +492,13 @@ def _sensor_label(eid, meta):
     return (meta or eid).strip()
 
 
+def _is_muted(meta):
+    """🔑 传感器是否被屏蔽（配置条目 muted:true）——屏蔽后不参与播报，但保留在配置里。"""
+    if isinstance(meta, dict):
+        return meta.get("muted") is True
+    return False
+
+
 def calc_device_energy(states, power_config):
     """用电三方案计算今日用电量 kWh：
     - daily（默认）：直接读 power_cost_today 实体
@@ -509,6 +516,8 @@ def calc_device_energy(states, power_config):
     for eid, meta in power_config.items():
         if eid.startswith("_"):
             continue
+        if _is_muted(meta):
+            continue  # 🔑 被屏蔽的用电传感器不参与
         # 旧格式字符串=daily；新格式 dict 带 power_type
         if isinstance(meta, dict):
             ptype = meta.get("power_type", "daily")
@@ -1479,6 +1488,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             # 🔑 不参与温度报警的房间（可多个，空格分隔）
             excl_rooms = [r.strip() for r in re.split(r'\s+', ts(config, "temp_exclude_rooms", "")) if r.strip()]
             for eid, meta in config["temp_sensors"].items():
+                if _is_muted(meta):
+                    continue  # 🔑 被屏蔽的传感器不参与播报
                 room = meta.get("room", "") if isinstance(meta, dict) else meta
                 label = _sensor_label(eid, meta)  # room+usage（客厅冰箱）
                 cur = get_float(states, eid)
@@ -1563,6 +1574,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             hums = {}  # label(room+usage) → value
             hum_rooms = {}  # label → 房间名（用于排除判断）
             for eid, meta in config["humidity_sensors"].items():
+                if _is_muted(meta):
+                    continue  # 🔑 被屏蔽的传感器不参与播报
                 room = meta.get("room", "") if isinstance(meta, dict) else meta
                 label = _sensor_label(eid, meta)
                 v = get_float(states, eid)
@@ -1633,6 +1646,8 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         for _eid, _meta in (config.get("power_sensors") or {}).items():
             if _eid.startswith("_"):
                 continue
+            if _is_muted(_meta):
+                continue  # 🔑 被屏蔽的用电设备不算"读不到"
             _label = _power_label(_eid, _meta)
             if _label and _label not in device_energy:
                 unread.append(_label)
@@ -1695,7 +1710,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             now_top_n = int(ts(config, "power_now_top_n", 3))
             now_pairs = [(_power_label(eid, meta), get_float(states, eid))
                          for eid, meta in config.get("power_now", {}).items()
-                         if not eid.startswith("_")]
+                         if not eid.startswith("_") and not _is_muted(meta)]  # 🔑 跳过屏蔽的
             now_pairs = [(n, w) for n, w in now_pairs if w is not None and w > 0]
             now_pairs.sort(key=lambda x: -x[1])  # 瓦数大的在前
             now_total = sum(w for _, w in now_pairs)
