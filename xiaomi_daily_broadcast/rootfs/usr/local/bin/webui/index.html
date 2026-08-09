@@ -36,6 +36,9 @@
   .entry select{flex:1;min-width:200px}
   .entry input{flex:1;min-width:120px}
   .entry .del{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px}
+  .drag-handle{cursor:grab;color:var(--dim);font-size:14px;user-select:none;flex:0 0 auto}
+  .entry[draggable=true] input{cursor:default}
+  .entry.drag-over{border-color:var(--accent)}
   .sec-title{font-size:13px;font-weight:600;color:var(--title);margin-bottom:4px}
   /* 🔑 模板配置页字段：label 一行、输入框一行占满，简洁紧凑 */
   .eng-label{display:block;font-size:12px;color:var(--dim);margin:8px 0 4px}
@@ -490,7 +493,9 @@ function entryHTML(sec, eid, room, usage, label, ptype, editable){
   }
   // 🔑 状态徽章：所有 section 统一宽度(height 34px 同输入框, min-width 96px 显示更全面如"93.5 / 5.2")，布局整齐一致
   var stateHtml='<span data-state-badge style="flex:0 0 auto;min-width:96px;height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--accent2);white-space:nowrap;padding:0 10px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);box-sizing:border-box">'+(st?esc(st+calcTxt):'-')+'</span>';
-  return '<div class="entry" data-raw="'+esc(eid)+'">'
+  // 🔑 拖拽排序：每行可拖动改变顺序（决定播报顺序）
+  return '<div class="entry" data-raw="'+esc(eid)+'" draggable="true" ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="dragDrop(event,\''+sec.key+'\')" ondragend="dragEnd(event)">'
+    +'<span class="drag-handle" title="拖动排序">⠿</span>'
     +'<input type="text" value="'+esc(eid)+'" '+eidAttr+' style="'+eidStyle+'">'
     +stateHtml
     +'<input type="text" value="'+esc(label||'')+'" placeholder="播报名" oninput="onRoom(this,\''+sec.key+'\')">'
@@ -629,7 +634,8 @@ var TPL_GROUPS=[
     {k:'fmt_power_top',label:'耗电·排名引导',ph:'{num}名次 {list}列表。示例：耗电前{num}：{list}',def:'耗电前{num}：{list}',type:'text'},
     {k:'fmt_power_top_item',label:'耗电·排名每条',ph:'{device}设备 {kwh}度。示例：{device}耗电{kwh}度',def:'{device}耗电{kwh}度',type:'text'},
     {k:'fmt_power_unread',label:'耗电·读不到',ph:'{count}个数 {items}设备。示例：另有{count}个设备没读到（{items}）',def:'另有{count}个用电设备读不到数据（{items}），未计入',type:'text'},
-    {k:'fmt_power_now_prefix',label:'功率·开头',ph:'示例：实时功率：',def:'实时功率：',type:'text'},
+    {k:'fmt_power_now_prefix',label:'功率·开头',ph:'{total}总瓦数。示例：实时功率共{total}瓦',def:'实时功率共{total}瓦',type:'text'},
+    {k:'fmt_power_now_top',label:'功率·排名引导',ph:'{num}名次 {list}列表。示例：耗电前{num}：{list}',def:'耗电前{num}：{list}',type:'text'},
     {k:'fmt_power_now_item',label:'功率·每条',ph:'{device}设备 {w}瓦。示例：{device}有{w}瓦',def:'{device} {w}瓦',type:'text'},
     {k:'fmt_power_now_alert',label:'功率·高功耗',ph:'{devices}合并设备。示例：{devices}功率较高',def:'{devices}功率较高，不用时可以关掉',type:'text'},
     {k:'fmt_lights_prefix',label:'灯光·开头',ph:'示例：灯光：',def:'灯光：',type:'text'},
@@ -963,6 +969,36 @@ function delEntry(key,btn){
   if(entry) entry.remove();
   markDirty();
   collectSection(key);
+}
+// 🔑 拖拽排序：拖动实体条目改变顺序（播报顺序跟着变）
+var _dragEntry=null;
+function dragStart(ev){
+  _dragEntry=ev.target.closest('.entry');
+  ev.dataTransfer.effectAllowed='move';
+  ev.dataTransfer.setData('text/plain','');
+  _dragEntry.style.opacity='.4';
+}
+function dragOver(ev){
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect='move';
+}
+function dragDrop(ev,key){
+  ev.preventDefault();
+  var target=ev.target.closest('.entry');
+  if(!target || target===_dragEntry) return;
+  var box=document.getElementById('sec-'+key);
+  // 插入到目标前/后（根据鼠标位置）
+  var rect=target.getBoundingClientRect();
+  if(ev.clientY > rect.top + rect.height/2){
+    target.after(_dragEntry);
+  }else{
+    target.before(_dragEntry);
+  }
+  markDirty();
+  collectSection(key);
+}
+function dragEnd(ev){
+  if(_dragEntry){ _dragEntry.style.opacity=''; _dragEntry=null; }
 }
 
 function saveCfg(){

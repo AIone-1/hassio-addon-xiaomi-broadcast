@@ -1695,19 +1695,31 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                          if not eid.startswith("_")]
             now_pairs = [(n, w) for n, w in now_pairs if w is not None and w > 0]
             now_pairs.sort(key=lambda x: -x[1])  # 瓦数大的在前
-            now_parts = [f"{n} {w:.0f}瓦" for n, w in now_pairs[:now_top_n]]
+            now_total = sum(w for _, w in now_pairs)
+            now_top = now_pairs[:now_top_n]
+            now_parts = [f"{n} {w:.0f}瓦" for n, w in now_top]
             high_alert = config.get("high_power_alert_w", 200)
             high_devices = [pair for pair in now_pairs if pair[1] > high_alert]
-            if now_parts:
+            if now_pairs:
                 _np = ts_fmt(config, "power_now", None)
                 if isinstance(_np, dict):
-                    _n_prefix = ts_fmt(config, "power_now", "实时功率：", "prefix")
+                    # 🔑 实时功率前缀含 {total}（共多少瓦），排名条数由 power_now_top_n 决定
+                    _n_prefix = ts_fmt(config, "power_now", "实时功率：共{total}瓦", "prefix")
                     _n_item = ts_fmt(config, "power_now", "", "item")
+                    _n_top = ts_fmt(config, "power_now", "耗电前{num}：{list}", "top")
                     _n_alert = ts_fmt(config, "power_now", "", "alert")
                     if _n_item:
-                        _n_items = "，".join(_n_item.replace("{device}", n).replace("{w}", f"{w:.0f}") for n, w in now_pairs)
+                        _n_items = "，".join(_n_item.replace("{device}", n).replace("{w}", f"{w:.0f}") for n, w in now_top)
                     else:
-                        _n_items = "，".join(f"{n} {w:.0f}瓦" for n, w in now_pairs)
+                        _n_items = "，".join(f"{n} {w:.0f}瓦" for n, w in now_top)
+                    _n_top_phrase = ""
+                    if now_top:
+                        _n_list = "，".join(f"{n} {w:.0f}瓦" for n, w in now_top)
+                        _n_phr = _n_top.replace("{num}", "三" if now_top_n == 3 else str(now_top_n))
+                        if "{list}" in _n_phr:
+                            _n_top_phrase = "，" + _n_phr.replace("{list}", _n_list)
+                        else:
+                            _n_top_phrase = "，" + _n_phr + "：" + _n_list
                     _n_extra = ""
                     _dev_rooms = "、".join(n for n, _ in high_devices)
                     if high_devices:
@@ -1718,15 +1730,18 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                                 _n_extra = "，" + "、".join(_n_alert.replace("{device}", n).replace("{w}", f"{p:.0f}") for n, p in high_devices)
                         else:
                             _n_extra = f"，注意：{_dev_rooms}功率较高，不用时可以关掉"
-                    power_now_line = _n_prefix + _n_items + _n_extra
+                    power_now_line = _n_prefix.replace("{total}", f"{now_total:.0f}") + _n_top_phrase + _n_extra
                 else:
-                    _now_tpl = _np or "实时功率：{items}{extra}"
+                    # 🔑 默认格式：实时功率共{total}瓦，耗电前{num}：设备 瓦
+                    _now_tpl = _np or "实时功率共{total}瓦，耗电前{num}：{list}{extra}"
+                    _now_list = "，".join(f"{n} {w:.0f}瓦" for n, w in now_top)
                     _now_extra = ""
                     if high_devices:
                         _dev_rooms = "、".join(n for n, _ in high_devices)
                         _now_extra = f"，注意：{_dev_rooms}功率较高，不用时可以关掉"
-                    power_now_line = _now_tpl.replace("{items}", "，".join(now_parts)).replace("{extra}", _now_extra)
-            report["power_now"] = {"now": [[n, p] for n, p in high_devices] if high_devices else []}
+                    power_now_line = _now_tpl.replace("{total}", f"{now_total:.0f}").replace("{num}", "三" if now_top_n == 3 else str(now_top_n)).replace("{list}", _now_list).replace("{extra}", _now_extra)
+            report["power_now"] = {"now": [[n, p] for n, p in high_devices] if high_devices else [],
+                                   "total_w": round(now_total, 0), "top": [[n, w] for n, w in now_top]}
         if power_now_line:
             lines.append(power_now_line + "。")
 
