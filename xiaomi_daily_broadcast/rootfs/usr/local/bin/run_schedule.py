@@ -835,6 +835,12 @@ WEBUI_HTML = """<!DOCTYPE html>
   .entry input{flex:1;min-width:120px}
   .entry .del{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px}
   .sec-title{font-size:13px;font-weight:600;color:var(--title);margin-bottom:4px}
+  /* 🔑 模板配置页字段：label 一行、输入框一行占满，简洁紧凑 */
+  .eng-label{display:block;font-size:12px;color:var(--dim);margin:8px 0 4px}
+  .eng-input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);font-size:13px}
+  .eng-input:focus{border-color:var(--accent);outline:none}
+  .eng-check{display:flex;align-items:center;gap:6px;padding:5px 0;font-size:13px;color:var(--text)}
+  .eng-check input{width:16px;height:16px;flex:0 0 auto}
   .sec-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;margin-bottom:4px}
   .sec-title-row .sec-title{margin-top:0;margin-bottom:0}
   .ref-btn{background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--accent2);padding:2px 9px;font-size:12px;cursor:pointer;line-height:1.5;flex:0 0 auto;transition:opacity .2s}
@@ -1381,16 +1387,16 @@ var TPL_GROUPS=[
     {k:'fault_offline_days',label:'离线提醒时间窗(天)',def:3,type:'number'},
   ]},
   {title:'句式',open:false,fields:[
-    {k:'fmt_temp',label:'温度（{items}=房间温度 {extra}=高温提醒）',def:'温度：{items}{extra}',type:'text'},
-    {k:'fmt_humidity',label:'湿度（{items}=房间湿度 {extra}=干燥过湿）',def:'湿度：{items}{extra}',type:'text'},
-    {k:'fmt_power',label:'耗电量（{total}=总量 {top}=前三 {unread}=读不到）',def:'耗电量：共{total}度{top}{unread}',type:'text'},
-    {k:'fmt_power_now',label:'实时功率（{items}=设备功率 {extra}=高功耗）',def:'实时功率：{items}{extra}',type:'text'},
-    {k:'fmt_security',label:'安全巡检（{items}=巡检内容）',def:'安全巡检：{items}',type:'text'},
-    {k:'fmt_pm25',label:'空气质量（{pm}=PM描述）',def:'空气质量：{pm}',type:'text'},
-    {k:'fmt_lights',label:'灯光（{items}=亮灯）',def:'灯光：{items}还亮着，不需要的话可以关掉',type:'text'},
-    {k:'fmt_task',label:'任务（{count}=任务数 {extra}=档位）',def:'任务：完成{count}个终端任务{extra}',type:'text'},
-    {k:'fmt_todo',label:'待办（{items}=待办列表）',def:'待办与备忘：{items}',type:'text'},
-    {k:'fmt_fault',label:'设备故障（{count}=台数 {items}=设备）',def:'有{count}台设备离线：{items}，有空检查一下',type:'text'},
+    {k:'fmt_temp',label:'温度',ph:'{items}=房间温度 {extra}=高温提醒',def:'温度：{items}{extra}',type:'text'},
+    {k:'fmt_humidity',label:'湿度',ph:'{items}=房间湿度 {extra}=干燥过湿',def:'湿度：{items}{extra}',type:'text'},
+    {k:'fmt_power',label:'耗电量',ph:'{total}=总量 {top}=前三 {unread}=读不到',def:'耗电量：共{total}度{top}{unread}',type:'text'},
+    {k:'fmt_power_now',label:'实时功率',ph:'{items}=设备功率 {extra}=高功耗',def:'实时功率：{items}{extra}',type:'text'},
+    {k:'fmt_security',label:'安全巡检',ph:'{items}=巡检内容',def:'安全巡检：{items}',type:'text'},
+    {k:'fmt_pm25',label:'空气质量',ph:'{pm}=PM描述',def:'空气质量：{pm}',type:'text'},
+    {k:'fmt_lights',label:'灯光',ph:'{items}=亮灯',def:'灯光：{items}还亮着，不需要的话可以关掉',type:'text'},
+    {k:'fmt_task',label:'任务',ph:'{count}=任务数 {extra}=档位',def:'任务：完成{count}个终端任务{extra}',type:'text'},
+    {k:'fmt_todo',label:'待办',ph:'{items}=待办列表',def:'待办与备忘：{items}',type:'text'},
+    {k:'fmt_fault',label:'设备故障',ph:'{count}=台数 {items}=设备',def:'有{count}台设备离线：{items}，有空检查一下',type:'text'},
   ]},
   {title:'板块开关',fields:[
     {k:'sec_greeting',label:'问候语',def:true,type:'check'},
@@ -1464,7 +1470,7 @@ function renderTplCfg(){
           h+='<textarea class="eng-input" data-tpl="'+f.k+'" style="min-height:50px">'+esc(val)+'</textarea>';
         }else{
           h+='<label class="eng-label">'+f.label+'</label>';
-          h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'">';
+          h+='<input class="eng-input" type="text" data-tpl="'+f.k+'" value="'+esc(val)+'"'+(f.ph?' placeholder="'+esc(f.ph)+'"':'')+'>';
         }
       });
       h+='</div>';
