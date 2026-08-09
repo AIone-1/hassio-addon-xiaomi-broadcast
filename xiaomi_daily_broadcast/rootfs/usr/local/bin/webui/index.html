@@ -1651,9 +1651,7 @@ function histDelete(ds,idx){
     var e=entries[idx];
     if(!e) return;
     var ts=e.ts;
-    // 🔑 存进撤销栈（date/ts/完整记录），点"撤销"可恢复
-    undoStack.push({date:ds, ts:ts, record:e});
-    redoStack=[];
+    // 🔑 后端删除时自动存撤销栈（/data/undo_history.jsonl），点"↩ 撤销"可恢复
     fetch(BASE+'history/delete?date='+ds+'&ts='+encodeURIComponent(ts),{method:'POST'}).then(function(r){return r.json()}).then(function(d){
       if(d.ok){
         // 🔑 删除成功提示 + 刷新列表/日历
