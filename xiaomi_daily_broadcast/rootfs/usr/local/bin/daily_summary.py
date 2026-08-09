@@ -66,19 +66,6 @@ def _refresh_endpoints():
     HA_WS, HA_API, TOKEN = _ha_endpoints()
 
 
-def _merge_period(ps, ptype, opt, enabled, hour, day, also, month=None):
-    """把 options 扁平键写入 period_summaries.<type> 嵌套结构。"""
-    if enabled in opt:
-        ps.setdefault(ptype, {})["enabled"] = bool(opt[enabled])
-    if opt.get(hour) is not None:
-        ps.setdefault(ptype, {})["hour"] = int(opt[hour])
-    if opt.get(day) is not None:
-        ps.setdefault(ptype, {})["day"] = int(opt[day])
-    if month is not None and opt.get(month) is not None:
-        ps.setdefault(ptype, {})["month"] = int(opt[month])
-    if also in opt:
-        ps.setdefault(ptype, {})["also_daily"] = bool(opt[also])
-
 
 def load_config():
     """读 JSON 配置 + 合并加载项 options（options 覆盖 JSON 同名键）。"""
@@ -110,23 +97,7 @@ def load_config():
         llm["fallback_to_template"] = bool(opt["fallback_to_template"])
     llm.setdefault("provider", "deepseek")
 
-    # 调度
-    sched = cfg.setdefault("broadcast_schedule", {})
-    if "broadcast_enabled" in opt:
-        sched["enabled"] = bool(opt["broadcast_enabled"])
-    if opt.get("weekday_hour") is not None:
-        sched["weekday_hour"] = int(opt["weekday_hour"])
-    if opt.get("weekend_hour") is not None:
-        sched["weekend_hour"] = int(opt["weekend_hour"])
-
-    # 周期总结
-    ps = cfg.setdefault("period_summaries", {})
-    _merge_period(ps, "weekly", opt, enabled="weekly_summary", hour="weekly_hour",
-                  day="weekly_day", also="weekly_also_daily")
-    _merge_period(ps, "monthly", opt, enabled="monthly_summary", hour="monthly_hour",
-                  day="monthly_day", also="monthly_also_daily")
-    _merge_period(ps, "yearly", opt, enabled="yearly_summary", hour="yearly_hour",
-                  day="yearly_day", month="yearly_month", also="yearly_also_daily")
+    # 定时调度已移除（用自动化+实体触发）——broadcast_schedule/period_summaries 由 JSON 配置管理（如有）
 
     # 🔑 前端切换的引擎模式（/data/engine_mode.json）优先于 options
     try:
@@ -1365,21 +1336,11 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
     wd = now.weekday()
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
-    # ── 调度检查（非强制模式）──
-    if not force:
-        # 周期总结或每日：decide_summary_type 统一判断（周期 > 每日，also_daily 整日生效）
-        summary_type = decide_summary_type(now, config)
-        if summary_type is None:
-            print(f"  当前 {now.hour}:{now.minute:02d} 非播报时段，跳过")
-            return
-        if summary_type == "daily" and not config.get("broadcast_schedule", {}).get("enabled", True):
-            print("  ⏸️ 定时播报已停用（网页设置可开启），跳过")
-            return
-        if summary_type != "daily" and _cycle_done(summary_type):
-            print(f"  ⏸️ 今天已播过{summary_type}总结，跳过")
-            return
-    else:
-        summary_type = summary_type or "daily"
+    # 定时调度已移除（用自动化+实体触发）。播报类型由触发方指定（force=手动/按钮/自动化）
+    summary_type = summary_type or "daily"
+    if not force and summary_type != "daily" and _cycle_done(summary_type):
+        print(f"  ⏸️ 今天已播过{summary_type}总结，跳过")
+        return
 
     # ── Phase 1: 查询温度历史（REST API，在 WS 之前）──
     # 用电量直接读 power_cost_today 实体当前值，不需要历史积分

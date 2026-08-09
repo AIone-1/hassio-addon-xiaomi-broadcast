@@ -1,5 +1,5 @@
 name: "小爱每日播报"
-version: "1.1.87"
+version: "1.1.88"
 slug: "xiaomi_daily_broadcast"
 description: >-
   定时把家里传感器状态生成中文播报稿，推送到小米音箱朗读。
@@ -31,27 +31,10 @@ options:
   ha_token: ""
   speaker_notify: "notify.xiaomi_cn_484529620_x08a_play_text_a_5_1"
   tts_speed: 4.5
-  engine_mode: "template"
   fallback_to_template: true
   deepseek_api_key: ""
   deepseek_model: "deepseek-chat"
   deepseek_base_url: "https://api.deepseek.com/anthropic"
-  broadcast_enabled: true
-  weekday_hour: 21
-  weekend_hour: 18
-  weekly_summary: false
-  weekly_hour: 20
-  weekly_day: 6
-  weekly_also_daily: false
-  monthly_summary: false
-  monthly_hour: 20
-  monthly_day: -1
-  monthly_also_daily: false
-  yearly_summary: false
-  yearly_hour: 20
-  yearly_month: 12
-  yearly_day: 31
-  yearly_also_daily: false
 
 schema:
   ha_host: "str?"
@@ -59,24 +42,7 @@ schema:
   ha_token: "password?"
   speaker_notify: "str?"
   tts_speed: "float?"
-  engine_mode: "list(template|llm)?"
   fallback_to_template: "bool?"
   deepseek_api_key: "password?"
   deepseek_model: "str?"
   deepseek_base_url: "url?"
-  broadcast_enabled: "bool?"
-  weekday_hour: "int(0,23)?"
-  weekend_hour: "int(0,23)?"
-  weekly_summary: "bool?"
-  weekly_hour: "int(0,23)?"
-  weekly_day: "int(0,6)?"
-  weekly_also_daily: "bool?"
-  monthly_summary: "bool?"
-  monthly_hour: "int(0,23)?"
-  monthly_day: "int?"
-  monthly_also_daily: "bool?"
-  yearly_summary: "bool?"
-  yearly_hour: "int(0,23)?"
-  yearly_month: "int(1,12)?"
-  yearly_day: "int(1,31)?"
-  yearly_also_daily: "bool?"

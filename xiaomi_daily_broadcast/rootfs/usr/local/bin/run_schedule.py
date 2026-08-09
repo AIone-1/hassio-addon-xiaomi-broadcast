@@ -593,10 +593,9 @@ def power_integral_loop():
 
 
 def scheduler_loop():
-    """60s 轮询：decide_summary_type 判断到点才播；每天 0 点记累计差值基准。"""
-    last = {}
+    """后台循环：每天 0 点记累计差值基准 + LLM 文案自动更新（定时播报已移除，用自动化/实体触发）。"""
     last_base_date = ""
-    log("⏰ 调度循环已启动")
+    log("⏰ 后台循环已启动（基准记录 + LLM 自动更新）")
     while True:
         try:
             today = datetime.now().strftime("%Y-%m-%d")
@@ -618,23 +617,7 @@ def scheduler_loop():
                     log(f"⚠️ LLM 文案自动更新启动失败: {e}")
                 last_base_date = today
 
-            cfg = ds.load_config()
-            st = ds.decide_summary_type(datetime.now(), cfg)
-            if st is not None:
-                key = f"{st}:{datetime.now():%Y-%m-%d}"
-                today = datetime.now().strftime("%Y-%m-%d")
-                if last.get(key) != today:
-                    last[key] = today
-                    log(f"⏰ 到点播报: {st}")
-                    if not LOCK.acquire(blocking=False):
-                        log("⚠️ 已有播报进行中，跳过定时触发")
-                        continue
-                    try:
-                        asyncio.run(ds.main(force=False, summary_type=st))
-                    except Exception as e:
-                        log(f"❌ 定时播报出错: {e}")
-                    finally:
-                        LOCK.release()
+            # 定时播报已移除（用自动化+实体触发）——本循环只做 0 点基准 + LLM 自动更新
         except Exception as e:
             log(f"⚠️ 调度循环错误: {e}")
         time.sleep(60)
@@ -1523,9 +1506,31 @@ function fillLlmExample(){
 function renderLlmCfg(){
   var box=document.getElementById('llmBox');
   if(!box) return;
-  var llm=((CONFIG.template_settings||{}).llm)||{};
+  var ts=CONFIG.template_settings||{};
+  var llm=ts.llm||{};
+  var presets=ts.llm_presets||{};
+  var cur=llm.current||'';
   var h='';
-  h+='<div class="sec-desc" style="margin-top:4px">提示语是告诉大模型怎么组织播报的指令。可微调语气/结构，留空用默认。</div>';
+  h+='<div class="sec-desc" style="margin-top:4px">提示语是告诉大模型怎么组织播报的指令。可保存多份存档（命名），不合适可切换别的。留空用默认。</div>';
+  // 🔑 存档管理：下拉切换当前档 + 保存为新档 + 删除
+  h+='<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;background:var(--bg-inset)">';
+  h+='<div class="eng-label" style="margin-top:0">📚 提示语存档</div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
+  h+='<select id="llm_preset_sel" style="flex:1;padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)">';
+  var names=Object.keys(presets);
+  if(names.length) h+='<option value="">（当前档未保存）</option>';
+  names.forEach(function(n){
+    h+='<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>';
+  });
+  h+='</select>';
+  h+='<button type="button" class="ghost" onclick="llmLoadPreset()" style="padding:6px 10px">📂 切换到此档</button>';
+  h+='<button type="button" class="ghost" onclick="llmDeletePreset()" style="padding:6px 10px;color:var(--red)">🗑️ 删档</button>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<input class="eng-input" type="text" id="llm_preset_name" placeholder="存档名字，如：温馨风 / 极简风" style="flex:1">';
+  h+='<button type="button" class="btn-go" onclick="llmSavePreset()" style="padding:6px 14px">💾 存为新档</button>';
+  h+='</div>';
+  h+='</div>';
   h+='<div style="margin-bottom:10px"><button type="button" class="btn-go" onclick="fillLlmExample()" style="padding:6px 14px">📋 填入示例提示语</button><span class="fmt-hint" style="margin-left:8px">点这个自动填入默认示例，改坏了可一键回退</span></div>';
   h+='<label class="eng-label">每日播报提示语</label>';
   h+='<div class="fmt-hint">告诉大模型每日播报怎么写：语气、结构、要求。留空用默认。</div>';
@@ -1557,6 +1562,53 @@ function saveLlm(){
       if(d.ok) tplDirty=false;
     })
     .catch(function(){document.getElementById('llmStatus').textContent='❌ 保存失败';});
+}
+// 🔑 存档：把当前提示语存为一份命名档（多份可切换，不合适换一个）
+function llmSavePreset(){
+  var name=(document.getElementById('llm_preset_name').value||'').trim();
+  if(!name){ document.getElementById('llmStatus').textContent='⚠️ 先填存档名字'; return; }
+  var ts=CONFIG.template_settings||{};
+  if(!ts.llm_presets) ts.llm_presets={};
+  ts.llm_presets[name]={
+    daily_prompt:document.getElementById('llm_daily_prompt').value,
+    period_prompt:document.getElementById('llm_period_prompt').value,
+    max_tokens:parseInt(document.getElementById('llm_max_tokens').value)||6000,
+  };
+  if(!ts.llm) ts.llm={};
+  ts.llm.current=name;
+  CONFIG.template_settings=ts;
+  markDirty();
+  document.getElementById('llmStatus').textContent='✅ 已存档为「'+name+'」，点保存生效';
+  renderLlmCfg();
+}
+// 🔑 切换：加载选中的档到编辑框
+function llmLoadPreset(){
+  var name=document.getElementById('llm_preset_sel').value;
+  if(!name) return;
+  var ts=CONFIG.template_settings||{};
+  var p=(ts.llm_presets||{})[name];
+  if(!p) return;
+  document.getElementById('llm_daily_prompt').value=p.daily_prompt||'';
+  document.getElementById('llm_period_prompt').value=p.period_prompt||'';
+  document.getElementById('llm_max_tokens').value=p.max_tokens||6000;
+  if(!ts.llm) ts.llm={};
+  ts.llm.current=name;
+  CONFIG.template_settings=ts;
+  markDirty();
+  document.getElementById('llmStatus').textContent='📂 已切换到「'+name+'」，点保存生效';
+}
+// 🔑 删除存档
+function llmDeletePreset(){
+  var name=document.getElementById('llm_preset_sel').value;
+  if(!name){ document.getElementById('llmStatus').textContent='⚠️ 先选择要删的存档'; return; }
+  if(!confirm('确定删除存档「'+name+'」吗？')) return;
+  var ts=CONFIG.template_settings||{};
+  delete ts.llm_presets[name];
+  if(ts.llm && ts.llm.current===name) delete ts.llm.current;
+  CONFIG.template_settings=ts;
+  markDirty();
+  document.getElementById('llmStatus').textContent='🗑️ 已删除「'+name+'」，点保存生效';
+  renderLlmCfg();
 }
 function loadTplPage(){
   // 🔑 打开模板配置页时读最新配置并渲染（加超时，避免一直"加载中"）
