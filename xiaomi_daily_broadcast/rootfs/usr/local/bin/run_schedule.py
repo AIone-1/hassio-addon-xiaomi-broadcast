@@ -699,6 +699,51 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/history/day":
             date_str = q.get("date", [""])[0]
             self._send(200, json.dumps(history_day(date_str), ensure_ascii=False), "application/json")
+        elif path == "/history/anomalies":
+            # ⚠️ 检测异常传感器数据：某设备单日耗电超阈值（正常家庭不可能）→ 标记该天为异常
+            try:
+                snaps = ds.load_snapshots()
+                threshold = float(q.get("threshold", ["30"])[0])  # 单日耗电超 30 度视为异常
+                anomalies = {}  # {date: [设备名]}
+                for date_str, s in snaps.items():
+                    bad = []
+                    p = s.get("power") or {}
+                    by_dev = p.get("by_device") or {}
+                    for label, kwh in by_dev.items():
+                        try:
+                            if float(kwh) > threshold:
+                                bad.append(label)
+                        except (ValueError, TypeError):
+                            pass
+                    if bad:
+                        anomalies[date_str] = bad
+                self._send(200, json.dumps({"anomalies": anomalies}, ensure_ascii=False), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/fix-anomaly":
+            # 🛠️ 修复异常：删掉当天异常设备的用电记录（该天该设备数据不可信）
+            try:
+                date_str = q.get("date", [""])[0]
+                snaps = ds.load_snapshots()
+                if date_str in snaps:
+                    s = snaps[date_str]
+                    p = s.get("power") or {}
+                    by_dev = p.get("by_device") or {}
+                    # 删掉单日耗电超阈值（30度）的设备——传感器异常
+                    bad_devs = [lb for lb, k in by_dev.items() if isinstance(k,(int,float)) and k > 30]
+                    for lb in bad_devs:
+                        del by_dev[lb]
+                    # 重算 total
+                    p["total_kwh"] = round(sum(by_dev.values()), 1)
+                    s["power"] = p
+                    snaps[date_str] = s
+                    ds.save_snapshots(snaps)
+                    msg = f"已修复 {date_str}：删除异常设备记录（{'、'.join(bad_devs) if bad_devs else '无'})"
+                else:
+                    msg = f"{date_str} 无快照数据"
+                self._send(200, json.dumps({"ok": True, "msg": msg}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/entities/buttons":
             # 播报按钮实体列表（供用户在自动化里引用）
             self._send(200, json.dumps([{"name": b["name"], "entity": b["entity"], "type": b["type"]} for b in BUTTONS], ensure_ascii=False), "application/json")
@@ -953,6 +998,9 @@ WEBUI_HTML = """<!DOCTYPE html>
   .cal-cell.today{border-color:var(--accent)}
   .cal-cell.selected{background:var(--accent);color:#fff}
   .cal-cell.selected .dot{background:#fff}
+  .cal-cell.anom{color:#f85149}
+  .cal-cell.anom .warn{font-size:10px;position:absolute;top:2px;right:3px}
+  .cal-cell.selected .warn{filter:brightness(2)}
   .hist-entry{padding:10px 12px;margin-bottom:6px;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer}
   .hist-entry:active{opacity:.8}
   .hist-entry .t{font-size:11px;color:var(--dim);margin-bottom:2px}
@@ -1087,6 +1135,11 @@ WEBUI_HTML = """<!DOCTYPE html>
     <button class="danger" onclick="clearSnapshot()">🗑️ 清除当天的统计数据</button>
     <div class="fmt-hint" style="margin-top:4px">周期统计（周/月/年）用的每日数据快照。如果今天的数据异常（比如测试过），点这个只清除今天的，不影响之前正常的数据。</div>
     <div class="save-status" id="snapStatus"></div>
+  </div>
+  <div class="card">
+    <button class="danger" onclick="fixAnomaly()">🛠️ 修复异常传感器数据</button>
+    <div class="fmt-hint" style="margin-top:4px">日历上带 ⚠️ 的日期表示有传感器异常（如某设备一天耗电几十度，不正常）。点这个删掉异常设备当天的记录（⚠️ 表示修复当前选中的日期；选一个 ⚠️ 日期再点）。</div>
+    <div class="save-status" id="fixStatus"></div>
   </div>
 </div>
 
@@ -2392,15 +2445,20 @@ function copyEntity(eid){
 }
 /* ─── 历史记录 ─── */
 var histYM={y:new Date().getFullYear(),m:new Date().getMonth()};
-var histDays={}, histSel='';
+var histDays={}, histSel='', histAnomalies={};
 function pad(n){return n<10?'0'+n:''+n;}
 function histFmt(y,m){return y+'-'+pad(m+1);}
 function histLoadCal(){
   var ym=histFmt(histYM.y,histYM.m);
-  fetch(BASE+'history/days?month='+ym+'&_='+Date.now()).then(function(r){return r.json()}).then(function(days){
-    histDays={}; (days||[]).forEach(function(d){histDays[d]=true;});
+  // 🔑 同时拉异常日期（某设备单日耗电超阈值 = 传感器异常）
+  Promise.all([
+    fetch(BASE+'history/days?month='+ym+'&_='+Date.now()).then(function(r){return r.json()}).catch(function(){return[]}),
+    fetch(BASE+'history/anomalies?month='+ym+'&_='+Date.now()).then(function(r){return r.json()}).catch(function(){return{anomalies:{}}}),
+  ]).then(function(res){
+    histDays={}; (res[0]||[]).forEach(function(d){histDays[d]=true;});
+    histAnomalies=(res[1]&&res[1].anomalies)||{};
     histRenderCal();
-  }).catch(function(){histDays={};histRenderCal();});
+  });
 }
 function histRenderCal(){
   var y=histYM.y,m=histYM.m;
@@ -2416,8 +2474,11 @@ function histRenderCal(){
   for(var d=1;d<=daysInMonth;d++){
     var ds=histFmt(y,m)+'-'+pad(d);
     var has=histDays[ds];
-    var cls='cal-cell'+(has?' has':'')+(ds===todayStr?' today':'')+(ds===histSel?' selected':'');
-    h+='<div class="'+cls+'" onclick="histPick(\\''+ds+'\\')">'+d+(has?'<span class="dot"></span>':'')+'</div>';
+    var isAnom=histAnomalies[ds];
+    var cls='cal-cell'+(has?' has':'')+(isAnom?' anom':'')+(ds===todayStr?' today':'')+(ds===histSel?' selected':'');
+    // 有异常的日期显示 ⚠️ 感叹号（替代圆点）
+    h+='<div class="'+cls+'" onclick="histPick(\\''+ds+'\\')" title="'+(isAnom?('⚠️ 传感器异常：'+histAnomalies[ds].join('、')):'')+'">'+d
+      +(isAnom?'<span class="warn">⚠️</span>':(has?'<span class="dot"></span>':''))+'</div>';
   }
   document.getElementById('histCal').innerHTML=h;
 }
@@ -2479,6 +2540,19 @@ function clearSnapshot(){
     var s=document.getElementById('snapStatus');
     s.textContent = d.ok?('✅ '+d.msg):'❌ 清除失败';
   }).catch(function(){document.getElementById('snapStatus').textContent='❌ 清除失败';});
+}
+// 🛠️ 修复异常传感器数据：删掉选中日期里异常设备（单日耗电超30度）的用电记录
+function fixAnomaly(){
+  var date=histSel;
+  if(!date){ document.getElementById('fixStatus').textContent='⚠️ 先在日历上选一个带 ⚠️ 的日期'; return; }
+  if(!histAnomalies[date]){ document.getElementById('fixStatus').textContent='⚠️ '+date+' 没有检测到异常'; return; }
+  if(!confirm('确定修复 '+date+' 吗？会删掉当天异常传感器（'+histAnomalies[date].join('、')+'）的用电记录，该天这些设备不再计入统计。')) return;
+  document.getElementById('fixStatus').textContent='修复中...';
+  fetch(BASE+'fix-anomaly?date='+date,{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    var s=document.getElementById('fixStatus');
+    s.textContent = d.ok?('✅ '+d.msg):'❌ 修复失败';
+    histLoadCal();  // 刷新日历（移除 ⚠️）
+  }).catch(function(){document.getElementById('fixStatus').textContent='❌ 修复失败';});
 }
 
 setInterval(refreshLog,5000);
