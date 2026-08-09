@@ -131,6 +131,7 @@
     <div id="textOut" style="font-size:14px;line-height:1.8;white-space:pre-wrap"></div>
   </div>
   <div class="card">
+    <div id="statsBar" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:12px"></div>
     <div id="log">日志加载中...</div>
   </div>
 </div>
@@ -953,22 +954,22 @@ function renderWeekPanel(ts){
   h+='<button type="button" class="'+(mode==='llm'?'btn-go':'ghost')+'" style="flex:1;padding:6px" onclick="setTplMode('+active+',\'llm\')">🤖 大模型生成</button>';
   h+='</div>';
   if(mode==='llm'){
-    h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:6px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
-    h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">点上面的按钮才生成（切换模式不会自动生成）。生成内容单独存放，不影响手动填写的。</div>';
-    // 🔑 大模型模式：自动更新方式三选一（每天/每7天/关闭），互斥
+    // 🔑 生成按钮 + 自动更新方式选择 放同一行（各一半）
     var autoKey=g.llmWeekKey.replace('_llm_days','_llm_autoupdate');
     var autoMode=ts[autoKey];
     // 兼容旧 bool：true=每天，false=每7天
     if(autoMode===true) autoMode='daily';
     else if(autoMode===false) autoMode='weekly';
     else if(autoMode!=='daily' && autoMode!=='weekly' && autoMode!=='off') autoMode='weekly';
-    h+='<div class="eng-label" style="margin-top:0">自动更新方式</div>';
-    h+='<div class="fmt-hint">每天=每天零点刷新当天；每7天=窗口滚出后更新一周；关闭=手动点生成。三种互斥选一种。</div>';
-    h+='<select data-tpl="'+autoKey+'" onchange="llmAutoMode(this,\''+autoKey+'\')" style="width:100%;padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);margin-bottom:8px">'
-      +'<option value="daily"'+(autoMode==='daily'?' selected':'')+'>每天自动更新</option>'
-      +'<option value="weekly"'+(autoMode==='weekly'?' selected':'')+'>每7天自动更新</option>'
-      +'<option value="off"'+(autoMode==='off'?' selected':'')+'>关闭自动更新</option>'
+    h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">';
+    h+='<button type="button" class="btn-go" style="flex:1;padding:7px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
+    h+='<select data-tpl="'+autoKey+'" onchange="llmAutoMode(this,\''+autoKey+'\')" style="flex:1;padding:7px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);height:36px">'
+      +'<option value="daily"'+(autoMode==='daily'?' selected':'')+'>每天更新</option>'
+      +'<option value="weekly"'+(autoMode==='weekly'?' selected':'')+'>每7天更新</option>'
+      +'<option value="off"'+(autoMode==='off'?' selected':'')+'>不更新</option>'
       +'</select>';
+    h+='</div>';
+    h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">点按钮生成；自动更新：每天=刷新当天，每7天=更新一周，不更新=手动。</div>';
   }else{
     // 🔑 手动模式：7天循环开关（这7条每周循环用，不用每周改日期）
     var loopOn=ts[g.loopKey]===true;
@@ -1079,14 +1080,22 @@ function genWeek(si){
     })
     .catch(function(){statusEl.textContent='❌ 生成失败（网络或超时）';});
 }
-// 🔑 大模型自动更新开关：开=每天零点刷新当天；关=每7天更新一回（实时写 CONFIG）
+// 🔑 大模型自动更新三选一：daily=每天 / weekly=每7天 / off=关闭
 function llmAutoMode(el,autoKey){
   var ts=CONFIG.template_settings||{};
-  // 三选一：daily=每天(true) / weekly=每7天 / off=关闭('off'，区别于旧false=每7天)
   var v=el.value;
   ts[autoKey]=(v==='daily')?true:v;
   CONFIG.template_settings=ts;
   markDirty();
+  // 🔑 切换更新频率：前端状态栏提示 + 后端日志同步显示
+  var modeName={daily:'每天自动更新',weekly:'每7天自动更新',off:'关闭自动更新'}[v]||v;
+  var secName=autoKey.replace('_llm_autoupdate','');
+  var labelMap={greeting:'问候语',ending:'结束语',tip:'小贴士',enc:'鼓励语'};
+  var lbl=labelMap[secName]||secName;
+  document.getElementById('tplStatus').textContent='🔁 '+lbl+' 已切换为：'+modeName+'（点保存生效）';
+  try{
+    fetch(BASE+'log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg:'🔁 '+lbl+'自动更新方式已切换为：'+modeName})}).catch(function(){});
+  }catch(e){}
 }
 function saveTpl(){
   // 🔑 收集模板配置并保存
@@ -1318,6 +1327,19 @@ function pollText(){
     pollTimer=setTimeout(pollText,1500);
   });
 }
+// 📊 日志页统计条：传感器总个数 / 离线传感器数 / 统计天数
+function loadStats(){
+  var bar=document.getElementById('statsBar');
+  if(!bar) return;
+  fetch(BASE+'stats?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+    if(!d || d.sensors===undefined){ bar.innerHTML=''; return; }
+    var offCls=(d.offline>0)?'color:var(--red)':'color:var(--green)';
+    bar.innerHTML=
+      '<span>📡 传感器共 <b>'+d.sensors+'</b> 个</span>'
+      +'<span style="'+offCls+'">'+(d.offline>0?('⚠️ 离线 <b>'+d.offline+'</b> 个'):'✅ 全部在线')+'</span>'
+      +'<span>📅 已统计 <b>'+d.days+'</b> 天</span>';
+  }).catch(function(){});
+}
 // 🔑 日志显示优化：每行 = 时间(灰) + 图标 + 消息（按类型分色），一眼看懂
 function logRowColor(msg){
   if(msg.indexOf('❌')>=0 || msg.indexOf('失败')>=0 || msg.indexOf('出错')>=0) return '#f85149';
@@ -1502,6 +1524,9 @@ function clearSnapshot(){
 
 setInterval(refreshLog,5000);
 refreshLog();
+// 📊 日志页统计条：传感器个数/离线/统计天数（随日志一起刷新）
+setInterval(loadStats,10000);
+loadStats();
 // 默认全部灰边（不选中任何按钮）
 setActive('');
 loadEngine();
