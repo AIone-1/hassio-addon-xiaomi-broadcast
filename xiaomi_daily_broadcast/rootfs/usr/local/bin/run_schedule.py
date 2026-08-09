@@ -802,6 +802,22 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/history/restore":
+            # ↩ 撤销：把删除的记录重新写回历史 JSONL（date/ts/record）
+            try:
+                data = json.loads(self._body() or b"{}")
+                date_str = data.get("date", "")
+                ts = data.get("ts", "")
+                record = data.get("record")
+                if record:
+                    line = json.dumps(record, ensure_ascii=False)
+                    with open(HISTORY_FILE, "a") as f:
+                        f.write(line + "\n")
+                    self._send(200, json.dumps({"ok": True, "msg": f"已恢复 {date_str} {ts} 的记录"}), "application/json")
+                else:
+                    self._send(400, json.dumps({"ok": False, "error": "record 必填"}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/fix-anomaly":
             # 🛠️ 修复异常（POST）：异常设备的用电记录用前两天的平均值替换（不是删除）
             # 例：卧室电源2 某天 55 度（传感器异常）→ 用前两天正常值平均修正
@@ -1066,10 +1082,10 @@ WEBUI_HTML = """<!DOCTYPE html>
 </head>
 <body data-theme="dark">
 <h1 style="display:flex;align-items:center;gap:8px">🎙️ 小爱每日播报
-  <!-- ‹ 后退 / 前进 ›：在 tab 之间回退/前进 -->
-  <button class="ghost" id="backBtn" onclick="histBack()" title="后退到上一个页面" style="padding:6px 10px;font-size:14px">‹</button>
-  <button class="ghost" id="fwdBtn" onclick="histFwd()" title="前进到下一个页面" style="padding:6px 10px;font-size:14px">›</button>
   <button class="ghost" id="fsBtn" onclick="toggleFullscreen()" style="margin-left:auto;padding:6px 12px;font-size:12px">⛶ 全屏</button>
+  <!-- ↩ 撤销 / ↪ 恢复：撤销上一步操作（如删掉的历史记录），放最右侧 -->
+  <button class="ghost" id="undoBtn" onclick="undoAction()" title="撤销上一步操作（如恢复删除的历史记录）" style="padding:6px 10px;font-size:14px">↩ 撤销</button>
+  <button class="ghost" id="redoBtn" onclick="redoAction()" title="恢复刚撤销的操作" style="padding:6px 10px;font-size:14px">↪ 恢复</button>
   <button class="ghost" id="themeBtn" onclick="toggleTheme()" style="padding:6px 12px;font-size:12px">☀️ 日间</button>
 </h1>
 <div class="tabs">
@@ -1285,11 +1301,31 @@ function pushPageHistory(p){
   pageHistoryIdx = pageHistory.length-1;
   try{ history.pushState({page:p}, '', '#'+p); }catch(e){}
 }
-function histBack(){
-  if(pageHistoryIdx>0){ _histRestoring=true; pageHistoryIdx--; showPage(pageHistory[pageHistoryIdx]); _histRestoring=false; }
+// ↩ 撤销 / ↪ 恢复：撤销上一步操作（如删掉的历史记录）
+var undoStack=[], redoStack=[];
+function undoAction(){
+  var op=undoStack.pop();
+  if(!op){ alert('没有可撤销的操作'); return; }
+  // 恢复删除的记录（重新写入）
+  fetch(BASE+'history/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(op)})
+    .then(function(r){return r.json()}).then(function(d){
+      redoStack.push(op);
+      document.getElementById('status').textContent = d.ok?('↩ 已撤销：'+d.msg):'❌ 撤销失败';
+      // 刷新历史
+      if(histSel) histPick(histSel);
+      histLoadCal();
+    }).catch(function(){document.getElementById('status').textContent='❌ 撤销失败';});
 }
-function histFwd(){
-  if(pageHistoryIdx<pageHistory.length-1){ _histRestoring=true; pageHistoryIdx++; showPage(pageHistory[pageHistoryIdx]); _histRestoring=false; }
+function redoAction(){
+  var op=redoStack.pop();
+  if(!op){ alert('没有可恢复的操作'); return; }
+  fetch(BASE+'history/delete?date='+op.date+'&ts='+encodeURIComponent(op.ts),{method:'POST'})
+    .then(function(r){return r.json()}).then(function(d){
+      undoStack.push(op);
+      document.getElementById('status').textContent = d.ok?('↪ 已恢复：'+d.msg):'❌ 恢复失败';
+      if(histSel) histPick(histSel);
+      histLoadCal();
+    }).catch(function(){document.getElementById('status').textContent='❌ 恢复失败';});
 }
 function showPage(p){
   pushPageHistory(p);
@@ -2607,10 +2643,13 @@ function histDelete(ds,idx){
     var e=entries[idx];
     if(!e) return;
     var ts=e.ts;
+    // 🔑 存进撤销栈（date/ts/完整记录），点"撤销"可恢复
+    undoStack.push({date:ds, ts:ts, record:e});
+    redoStack=[];
     fetch(BASE+'history/delete?date='+ds+'&ts='+encodeURIComponent(ts),{method:'POST'}).then(function(r){return r.json()}).then(function(d){
       if(d.ok){
         // 🔑 删除成功提示 + 刷新列表/日历
-        document.getElementById('histList').innerHTML='<div style="color:var(--green)">✅ '+esc(d.msg||'已删除')+'</div>';
+        document.getElementById('histList').innerHTML='<div style="color:var(--green)">✅ '+esc(d.msg||'已删除')+'（↩ 撤销可恢复）</div>';
         setTimeout(function(){ histPick(ds); }, 600);
         histLoadCal();
       }else{
