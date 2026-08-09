@@ -721,24 +721,46 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/fix-anomaly":
-            # 🛠️ 修复异常：删掉当天异常设备的用电记录（该天该设备数据不可信）
+            # 🛠️ 修复异常：异常设备的用电记录用前两天的平均值替换（不是删除）
+            # 例：卧室电源2 某天 55 度（传感器异常）→ 用前两天正常值平均修正
             try:
                 date_str = q.get("date", [""])[0]
                 snaps = ds.load_snapshots()
+                # 按日期找该设备前两天的正常值（排除当天、排除异常值>30）
+                def _prior_avg(dev_label):
+                    vals = []
+                    for d in sorted(snaps.keys()):
+                        if d >= date_str:
+                            continue
+                        dd = (snaps[d].get("power") or {}).get("by_device") or {}
+                        v = dd.get(dev_label)
+                        if isinstance(v, (int, float)) and 0 <= v <= 30:  # 只取正常值
+                            vals.append(v)
+                        if len(vals) >= 2:
+                            break
+                    return (sum(vals) / len(vals)) if vals else None
                 if date_str in snaps:
                     s = snaps[date_str]
                     p = s.get("power") or {}
                     by_dev = p.get("by_device") or {}
-                    # 删掉单日耗电超阈值（30度）的设备——传感器异常
+                    # 找出异常的设备（单日耗电超30度）
                     bad_devs = [lb for lb, k in by_dev.items() if isinstance(k,(int,float)) and k > 30]
+                    fixed = []
                     for lb in bad_devs:
-                        del by_dev[lb]
+                        avg = _prior_avg(lb)
+                        if avg is not None:
+                            by_dev[lb] = round(avg, 2)   # 用前两天平均值替换异常值
+                            fixed.append(f"{lb}:{by_dev[lb]}度")
+                        else:
+                            # 无历史正常值 → 删除该设备当天记录
+                            del by_dev[lb]
+                            fixed.append(f"{lb}:无历史删除")
                     # 重算 total
                     p["total_kwh"] = round(sum(by_dev.values()), 1)
                     s["power"] = p
                     snaps[date_str] = s
                     ds.save_snapshots(snaps)
-                    msg = f"已修复 {date_str}：删除异常设备记录（{'、'.join(bad_devs) if bad_devs else '无'})"
+                    msg = f"已修复 {date_str}：{'、'.join(fixed) if fixed else '无异常设备'}"
                 else:
                     msg = f"{date_str} 无快照数据"
                 self._send(200, json.dumps({"ok": True, "msg": msg}), "application/json")
@@ -972,9 +994,9 @@ WEBUI_HTML = """<!DOCTYPE html>
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
   /* 🔑 播报页控件统一样式：14px、40px 高、圆角8px */
-  /* 语音/文字/清空/实体按钮用纯白色底（--bg-inset 在日间模式是白色），选中态蓝底 */
+  /* 语音/文字/清空/实体按钮：纯白色底（不管主题），深色文字，选中态蓝底 */
   .row button,.row select{font-size:14px;height:40px;border-radius:8px}
-  .row button{background:var(--bg-inset);color:var(--text);border:1px solid var(--border);padding:0 14px;line-height:1}
+  .row button{background:#ffffff;color:#24292f;border:1px solid #d0d7de;padding:0 14px;line-height:1}
   .row button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
   .row select{background:var(--bg-inset);color:var(--text);border:1px solid var(--border);padding:0 10px}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
