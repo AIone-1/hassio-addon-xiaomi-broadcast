@@ -61,7 +61,7 @@
   .search-row input,.search-row select{width:98%;box-sizing:border-box;padding:8px 10px;height:36px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:none;font-size:14px}
   .search-row select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:28px}
   .search-row input:focus{border-color:var(--accent);outline:none}
-  #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
+  #log{font-family:ui-monospace,monospace;font-size:12px;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
   #status{font-size:12px;color:var(--dim)}
   .save-status{font-size:12px;color:var(--green);min-height:18px;margin-top:8px}
   .week-tab{flex:1;text-align:center;padding:7px 0;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);color:var(--dim);cursor:pointer;font-size:13px;user-select:none}
@@ -190,8 +190,8 @@
     <div id="histList" style="font-size:12px;color:#8b949e">选择日期查看播报记录</div>
   </div>
   <div class="card">
-    <button class="danger" onclick="clearSnapshot()">🗑️ 清空周期统计数据</button>
-    <div class="fmt-hint" style="margin-top:4px">周期统计（周/月/年）用的每日数据快照。之前有测试数据导致统计不准的话，点这个清空，从今天开始重新积累。</div>
+    <button class="danger" onclick="clearSnapshot()">🗑️ 清除当天的统计数据</button>
+    <div class="fmt-hint" style="margin-top:4px">周期统计（周/月/年）用的每日数据快照。如果今天的数据异常（比如测试过），点这个只清除今天的，不影响之前正常的数据。</div>
     <div class="save-status" id="snapStatus"></div>
   </div>
 </div>
@@ -1306,10 +1306,32 @@ function pollText(){
     pollTimer=setTimeout(pollText,1500);
   });
 }
+// 🔑 日志显示优化：每行 = 时间(灰) + 图标 + 消息（按类型分色），一眼看懂
+function logRowColor(msg){
+  if(msg.indexOf('❌')>=0 || msg.indexOf('失败')>=0 || msg.indexOf('出错')>=0) return '#f85149';
+  if(msg.indexOf('✅')>=0 || msg.indexOf('完成')>=0 || msg.indexOf('已')>=0) return '#3fb950';
+  if(msg.indexOf('⚠️')>=0) return '#d29922';
+  if(msg.indexOf('📢')>=0 || msg.indexOf('播报')>=0) return '#58a6ff';
+  if(msg.indexOf('🤖')>=0) return '#bc8cff';
+  if(msg.indexOf('📊')>=0 || msg.indexOf('⚡')>=0) return '#3fb950';
+  return '';
+}
 function refreshLog(){
   fetch(BASE+'logs?'+Date.now()).then(function(r){return r.json()}).then(function(a){
-    document.getElementById('log').textContent=(a||[]).join('\n')||'暂无日志';
-    document.getElementById('log').scrollTop=document.getElementById('log').scrollHeight;
+    if(!a || !a.length){ document.getElementById('log').textContent='暂无日志'; return; }
+    var h='';
+    // 从旧到新显示（倒序方便看最新在底部？日志本就旧→新，保持顺序）
+    a.forEach(function(line){
+      // 拆 [时间] 和 消息
+      var m=line.match(/^\[([^\]]+)\]\s*(.*)$/);
+      var time=m?m[1]:'', msg=m?m[2]:line;
+      var color=logRowColor(msg);
+      h+='<div style="line-height:1.7"><span style="color:var(--faint);font-size:11px">'+esc(time)+'</span> '
+        +'<span style="color:'+(color||'var(--text)')+'">'+esc(msg)+'</span></div>';
+    });
+    var el=document.getElementById('log');
+    el.innerHTML=h;
+    el.scrollTop=el.scrollHeight;
   });
 }
 function clearLog(){
@@ -1456,14 +1478,14 @@ function histView(ds,idx){
   });
 }
 function loadHist(){ histLoadCal(); }
-// 🗑️ 清空周期统计数据快照（测试数据污染时用）
+// 🗑️ 清除当天统计数据快照（今天数据异常时用，不影响之前）
 function clearSnapshot(){
-  if(!confirm('确定清空周期统计数据吗？清空后周/月/年统计从今天开始重新积累，不可恢复。')) return;
-  document.getElementById('snapStatus').textContent='清空中...';
+  if(!confirm('确定清除今天的数据吗？只清除今天，之前正常的数据不受影响。')) return;
+  document.getElementById('snapStatus').textContent='清除中...';
   fetch(BASE+'clear-snapshot',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
     var s=document.getElementById('snapStatus');
-    s.textContent = d.ok?'✅ 已清空，周期统计从今天重新积累':'❌ 清空失败';
-  }).catch(function(){document.getElementById('snapStatus').textContent='❌ 清空失败';});
+    s.textContent = d.ok?('✅ '+d.msg):'❌ 清除失败';
+  }).catch(function(){document.getElementById('snapStatus').textContent='❌ 清除失败';});
 }
 
 setInterval(refreshLog,5000);
