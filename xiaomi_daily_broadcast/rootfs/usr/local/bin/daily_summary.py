@@ -364,6 +364,11 @@ def apply_section_filters(report, config):
         "faults": "fault", "tip": "tip", "encouragement_options": "enc",
         "power_now": "power_now",
     }
+    # 🔑 周期总结 report：period_stats 里嵌套的板块数据也要过滤（如 tasks）
+    if not ts_on(config, "task"):
+        ps = report.get("period_stats")
+        if ps:
+            ps["tasks"] = {"total": 0, "days": 0, "avg_daily": 0}
     for field, sec in _map.items():
         if not ts_on(config, sec):
             if isinstance(report.get(field), list):
@@ -1264,7 +1269,8 @@ def build_period_text(summary_type, ps, now, config):
         if top:
             lines.append("耗电最多：" + "，".join(f"{n}{k:.1f}度" for n, k in top) + "。")
 
-    if ps["tasks"]["total"]:
+    # 🔑 板块开关：终端任务关了就不播（和播报栏目一致）
+    if ts_on(config, "task") and ps["tasks"]["total"]:
         lines.append(f"{period_label}共完成了{ps['tasks']['total']}个终端任务，平均每天{ps['tasks']['avg_daily']:.1f}个。")
 
     if ps["pm25"]["days"] and ps["pm25"]["days_over_100"]:
@@ -2161,6 +2167,8 @@ async def run_period_summary(summary_type, now, ws, states, config,
     engine_mode = config.get("engine", {}).get("mode", "template")
     if engine_mode == "llm":
         report = build_period_report(summary_type, period_stats, now, config, states)
+        # 🔑 大模型周期总结也遵循板块开关（关闭的板块数据不传给大模型）
+        apply_section_filters(report, config)
         if print_report:
             print("📊 period_report: " + json.dumps(report, ensure_ascii=False, indent=2))
         print("  🤖 大模型引擎生成周期总结...")

@@ -780,11 +780,85 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/history/delete":
-            # 🗑️ 删除某条历史记录（date+ts 匹配，POST）
+            # 🗑️ 删除某条历史记录（date+ts 匹配，POST）；被删记录存到撤销栈可恢复
             try:
                 date_str = q.get("date", [""])[0]
                 ts = q.get("ts", [""])[0]
                 if HISTORY_FILE.exists():
+                    lines = HISTORY_FILE.read_text().splitlines()
+                    keep = []
+                    deleted = None
+                    for line in lines:
+                        try:
+                            r = json.loads(line)
+                        except Exception:
+                            keep.append(line)
+                            continue
+                        if r.get("date") == date_str and r.get("ts") == ts:
+                            deleted = r  # 🔑 存下被删记录
+                            continue  # 删除这条
+                        keep.append(line)
+                    HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
+                    # 🔑 存撤销栈（/data/undo_history.jsonl，栈顶=最近删除）
+                    if deleted:
+                        try:
+                            undo_file = Path("/data/undo_history.jsonl")
+                            if undo_file.exists():
+                                undo_lines = undo_file.read_text().splitlines()
+                            else:
+                                undo_lines = []
+                            undo_lines.append(json.dumps(deleted, ensure_ascii=False))
+                            undo_file.write_text("\n".join(undo_lines) + "\n")
+                        except Exception:
+                            pass
+                    self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
+                else:
+                    self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/history/restore":
+            # ↩ 撤销：从撤销栈恢复最近一条被删的记录（不依赖前端）
+            try:
+                undo_file = Path("/data/undo_history.jsonl")
+                if not undo_file.exists():
+                    self._send(200, json.dumps({"ok": False, "error": "无撤销记录"}), "application/json")
+                    return
+                undo_lines = undo_file.read_text().splitlines()
+                if not undo_lines:
+                    self._send(200, json.dumps({"ok": False, "error": "无撤销记录"}), "application/json")
+                    return
+                record = json.loads(undo_lines[-1])   # 栈顶=最近删除
+                # 写回历史
+                with open(HISTORY_FILE, "a") as f:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                # 移除撤销栈顶 + 存入 redo 栈（可恢复删除）
+                undo_file.write_text("\n".join(undo_lines[:-1]) + ("\n" if len(undo_lines) > 1 else ""))
+                try:
+                    redo_file = Path("/data/redo_history.jsonl")
+                    if redo_file.exists():
+                        redo_lines = redo_file.read_text().splitlines()
+                    else:
+                        redo_lines = []
+                    redo_lines.append(json.dumps(record, ensure_ascii=False))
+                    redo_file.write_text("\n".join(redo_lines) + "\n")
+                except Exception:
+                    pass
+                self._send(200, json.dumps({"ok": True, "msg": f"已恢复 {record.get('date','')} {record.get('ts','')} 的记录"}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/history/undo-del":
+            # ↪ 恢复（redo）：撤销后把记录重新删掉（等价再删一次），记录进 redo 栈
+            try:
+                redo_file = Path("/data/redo_history.jsonl")
+                if redo_file.exists():
+                    redo_lines = redo_file.read_text().splitlines()
+                else:
+                    redo_lines = []
+                record = None
+                if redo_lines:
+                    record = json.loads(redo_lines[-1])
+                    redo_file.write_text("\n".join(redo_lines[:-1]) + ("\n" if len(redo_lines) > 1 else ""))
+                if record and HISTORY_FILE.exists():
                     lines = HISTORY_FILE.read_text().splitlines()
                     keep = []
                     for line in lines:
@@ -793,29 +867,13 @@ class Handler(BaseHTTPRequestHandler):
                         except Exception:
                             keep.append(line)
                             continue
-                        if r.get("date") == date_str and r.get("ts") == ts:
+                        if r.get("date") == record.get("date") and r.get("ts") == record.get("ts"):
                             continue  # 删除这条
                         keep.append(line)
                     HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
-                    self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
+                    self._send(200, json.dumps({"ok": True, "msg": f"已重新删除 {record.get('date','')} {record.get('ts','')} 的记录"}), "application/json")
                 else:
-                    self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
-            except Exception as e:
-                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
-        elif path == "/history/restore":
-            # ↩ 撤销：把删除的记录重新写回历史 JSONL（date/ts/record）
-            try:
-                data = json.loads(self._body() or b"{}")
-                date_str = data.get("date", "")
-                ts = data.get("ts", "")
-                record = data.get("record")
-                if record:
-                    line = json.dumps(record, ensure_ascii=False)
-                    with open(HISTORY_FILE, "a") as f:
-                        f.write(line + "\n")
-                    self._send(200, json.dumps({"ok": True, "msg": f"已恢复 {date_str} {ts} 的记录"}), "application/json")
-                else:
-                    self._send(400, json.dumps({"ok": False, "error": "record 必填"}), "application/json")
+                    self._send(200, json.dumps({"ok": False, "error": "无恢复记录"}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/fix-anomaly":
@@ -1301,31 +1359,20 @@ function pushPageHistory(p){
   pageHistoryIdx = pageHistory.length-1;
   try{ history.pushState({page:p}, '', '#'+p); }catch(e){}
 }
-// ↩ 撤销 / ↪ 恢复：撤销上一步操作（如删掉的历史记录）
-var undoStack=[], redoStack=[];
+// ↩ 撤销 / ↪ 恢复：撤销上一步操作（如删掉的历史记录）。后端存撤销栈，可靠不丢
 function undoAction(){
-  var op=undoStack.pop();
-  if(!op){ alert('没有可撤销的操作'); return; }
-  // 恢复删除的记录（重新写入）
-  fetch(BASE+'history/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(op)})
-    .then(function(r){return r.json()}).then(function(d){
-      redoStack.push(op);
-      document.getElementById('status').textContent = d.ok?('↩ 已撤销：'+d.msg):'❌ 撤销失败';
-      // 刷新历史
-      if(histSel) histPick(histSel);
-      histLoadCal();
-    }).catch(function(){document.getElementById('status').textContent='❌ 撤销失败';});
+  fetch(BASE+'history/restore',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('status').textContent = d.ok?('↩ 已撤销：'+d.msg):('↩ 撤销失败：'+(d.error||'无撤销记录'));
+    if(histSel) histPick(histSel);
+    histLoadCal();
+  }).catch(function(){document.getElementById('status').textContent='❌ 撤销失败';});
 }
 function redoAction(){
-  var op=redoStack.pop();
-  if(!op){ alert('没有可恢复的操作'); return; }
-  fetch(BASE+'history/delete?date='+op.date+'&ts='+encodeURIComponent(op.ts),{method:'POST'})
-    .then(function(r){return r.json()}).then(function(d){
-      undoStack.push(op);
-      document.getElementById('status').textContent = d.ok?('↪ 已恢复：'+d.msg):'❌ 恢复失败';
-      if(histSel) histPick(histSel);
-      histLoadCal();
-    }).catch(function(){document.getElementById('status').textContent='❌ 恢复失败';});
+  fetch(BASE+'history/undo-del',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('status').textContent = d.ok?('↪ 已恢复：'+d.msg):('↪ 恢复失败：'+(d.error||''));
+    if(histSel) histPick(histSel);
+    histLoadCal();
+  }).catch(function(){document.getElementById('status').textContent='❌ 恢复失败';});
 }
 function showPage(p){
   pushPageHistory(p);

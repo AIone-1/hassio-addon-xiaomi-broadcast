@@ -320,31 +320,20 @@ function pushPageHistory(p){
   pageHistoryIdx = pageHistory.length-1;
   try{ history.pushState({page:p}, '', '#'+p); }catch(e){}
 }
-// ↩ 撤销 / ↪ 恢复：撤销上一步操作（如删掉的历史记录）
-var undoStack=[], redoStack=[];
+// ↩ 撤销 / ↪ 恢复：撤销上一步操作（如删掉的历史记录）。后端存撤销栈，可靠不丢
 function undoAction(){
-  var op=undoStack.pop();
-  if(!op){ alert('没有可撤销的操作'); return; }
-  // 恢复删除的记录（重新写入）
-  fetch(BASE+'history/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(op)})
-    .then(function(r){return r.json()}).then(function(d){
-      redoStack.push(op);
-      document.getElementById('status').textContent = d.ok?('↩ 已撤销：'+d.msg):'❌ 撤销失败';
-      // 刷新历史
-      if(histSel) histPick(histSel);
-      histLoadCal();
-    }).catch(function(){document.getElementById('status').textContent='❌ 撤销失败';});
+  fetch(BASE+'history/restore',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('status').textContent = d.ok?('↩ 已撤销：'+d.msg):('↩ 撤销失败：'+(d.error||'无撤销记录'));
+    if(histSel) histPick(histSel);
+    histLoadCal();
+  }).catch(function(){document.getElementById('status').textContent='❌ 撤销失败';});
 }
 function redoAction(){
-  var op=redoStack.pop();
-  if(!op){ alert('没有可恢复的操作'); return; }
-  fetch(BASE+'history/delete?date='+op.date+'&ts='+encodeURIComponent(op.ts),{method:'POST'})
-    .then(function(r){return r.json()}).then(function(d){
-      undoStack.push(op);
-      document.getElementById('status').textContent = d.ok?('↪ 已恢复：'+d.msg):'❌ 恢复失败';
-      if(histSel) histPick(histSel);
-      histLoadCal();
-    }).catch(function(){document.getElementById('status').textContent='❌ 恢复失败';});
+  fetch(BASE+'history/undo-del',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    document.getElementById('status').textContent = d.ok?('↪ 已恢复：'+d.msg):('↪ 恢复失败：'+(d.error||''));
+    if(histSel) histPick(histSel);
+    histLoadCal();
+  }).catch(function(){document.getElementById('status').textContent='❌ 恢复失败';});
 }
 function showPage(p){
   pushPageHistory(p);
