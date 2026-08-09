@@ -7,13 +7,16 @@
 <style>
   :root{
     --bg:#0d1117; --bg2:#161b22; --bg3:#0a0e14; --bg-inset:#0d1117;
-    --border:#30363d; --text:#c9d1d9; --title:#f0f6fc; --dim:#8b949e; --faint:#484f58;
-    --accent:#1f6feb; --accent2:#58a6ff; --red:#f85149; --green:#3fb950;
+    --border:#30363d; --text:#c9d1d9; --title:#f0f6fc; --dim:#8b949e; --faint:#6e7681;
+    --accent:#1f6feb; --accent2:#58a6ff; --red:#f85149; --green:#3fb950; --yellow:#d29922; --purple:#bc8cff;
+    /* 🔑 控件底色/文字：夜间比卡片稍亮有层次，日间纯白底黑字 */
+    --control-bg:#21262d; --control-text:#e6edf3;
   }
   body[data-theme="light"]{
     --bg:#ffffff; --bg2:#f6f8fa; --bg3:#f6f8fa; --bg-inset:#ffffff;
     --border:#d0d7de; --text:#24292f; --title:#1f2328; --dim:#57606a; --faint:#8b949e;
-    --accent:#0969da; --accent2:#0969da; --red:#cf222e; --green:#1a7f37;
+    --accent:#0969da; --accent2:#0969da; --red:#cf222e; --green:#1a7f37; --yellow:#9a6700; --purple:#8250df;
+    --control-bg:#ffffff; --control-text:#1f2328;
   }
   body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:16px}
   h1{font-size:18px;color:var(--title)}
@@ -28,14 +31,13 @@
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
-  /* 🔑 播报页控件统一样式：14px、40px 高、圆角8px */
-  /* 播报页控件统一：按钮和下拉同一白底、黑色文字（二级菜单按钮/切换按钮文字黑色） */
-  .row button,.row select{font-size:14px;height:40px;border-radius:8px;background:#ffffff!important;color:#24292f!important;border:1px solid #d0d7de;padding:0 14px;line-height:1}
-  .row select{color:#24292f!important;padding:0 10px}
+  /* 🔑 播报页控件统一样式：14px、40px 高、圆角8px。跟随主题变量：夜间深底浅字、日间白底黑字，整体协调 */
+  .row button,.row select{font-size:14px;height:40px;border-radius:8px;background:var(--control-bg);color:var(--control-text);border:1px solid var(--border);padding:0 14px;line-height:1}
+  .row select{color:var(--control-text);padding:0 10px}
   .row button.active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
   #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent)!important;border:1px solid var(--accent);color:#fff!important}
-  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){background:transparent;border:1px solid var(--border);color:var(--accent2)}
+  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){border:1px solid var(--border);color:var(--accent2)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -83,7 +85,7 @@
   .cal-cell.today{border-color:var(--accent)}
   .cal-cell.selected{background:var(--accent);color:#fff}
   .cal-cell.selected .dot{background:#fff}
-  .cal-cell.anom{color:#f85149}
+  .cal-cell.anom{color:var(--red)}
   .cal-cell.anom .warn{font-size:9px;margin-left:1px;line-height:1}
   .cal-cell.selected .warn{filter:brightness(2)}
   .hist-entry{padding:10px 12px;margin-bottom:6px;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer}
@@ -134,7 +136,7 @@
       <!-- ⏸️ 句间停顿：带文字说明，和模板页控件同款样式 -->
       <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:14px;color:var(--dim)">
         停顿
-        <select id="pauseSel" onchange="changePause()" title="播报时每句之间的停顿时间" style="padding:8px;border-radius:8px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:none;height:40px;font-size:14px">
+        <select id="pauseSel" onchange="changePause()" title="播报时每句之间的停顿时间" style="padding:8px;border-radius:8px;background:var(--control-bg);color:var(--control-text);border:1px solid var(--border);max-width:none;height:40px;font-size:14px">
           <option value="0.3">0.3秒</option>
           <option value="0.5" selected>0.5秒</option>
           <option value="0.8">0.8秒</option>
@@ -227,7 +229,7 @@
     <div class="save-status" id="fixStatus"></div>
   </div>
   <div class="card">
-    <div id="histList" style="font-size:12px;color:#8b949e">选择日期查看播报记录</div>
+    <div id="histList" style="font-size:12px;color:var(--dim)">选择日期查看播报记录</div>
   </div>
   <div class="card">
     <button class="danger" onclick="clearSnapshot()">🗑️ 清除当天的统计数据</button>
@@ -525,14 +527,14 @@ function onSearch(key){
     var hay=(e.entity_id+' '+(e.name||'')).toLowerCase();
     if(!q || hay.indexOf(q)>=0) matches.push(e);
   });
-  if(!matches.length){ box.innerHTML='<div style="color:#8b949e;font-size:12px;padding:6px 0">无匹配实体</div>'; return; }
+  if(!matches.length){ box.innerHTML='<div style="color:var(--dim);font-size:12px;padding:6px 0">无匹配实体</div>'; return; }
   var total=matches.length;
-  var h='<div style="font-size:11px;color:#8b949e;margin-top:8px;margin-bottom:4px">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择，可滚动）</div>';
+  var h='<div style="font-size:11px;color:var(--dim);margin-top:8px;margin-bottom:4px">共 '+total+' 个'+(q?'，匹配 “'+esc(q)+'”':'')+'（点击选择，可滚动）</div>';
   // 全部显示 + 限高可滚动（最多约 20 条可见，超出滚动查看）
   h+='<div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px">';
   matches.forEach(function(e){
     var label=(e.name?e.name+' — ':'')+e.entity_id;
-    h+='<div style="padding:7px 10px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset,#0d1117);border:1px solid #30363d;cursor:pointer;font-size:12px" onclick="pickCandidate(\''+key+'\',\''+e.entity_id+'\')">🔗 '+esc(label)+'</div>';
+    h+='<div style="padding:7px 10px;margin-bottom:3px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border);cursor:pointer;font-size:12px" onclick="pickCandidate(\''+key+'\',\''+e.entity_id+'\')">🔗 '+esc(label)+'</div>';
   });
   h+='</div>';
   box.innerHTML=h;
@@ -1473,12 +1475,12 @@ function loadStats(){
 }
 // 🔑 日志显示优化：每行 = 时间(灰) + 图标 + 消息（按类型分色），一眼看懂
 function logRowColor(msg){
-  if(msg.indexOf('❌')>=0 || msg.indexOf('失败')>=0 || msg.indexOf('出错')>=0) return '#f85149';
-  if(msg.indexOf('✅')>=0 || msg.indexOf('完成')>=0 || msg.indexOf('已')>=0) return '#3fb950';
-  if(msg.indexOf('⚠️')>=0) return '#d29922';
-  if(msg.indexOf('📢')>=0 || msg.indexOf('播报')>=0) return '#58a6ff';
-  if(msg.indexOf('🤖')>=0) return '#bc8cff';
-  if(msg.indexOf('📊')>=0 || msg.indexOf('⚡')>=0) return '#3fb950';
+  if(msg.indexOf('❌')>=0 || msg.indexOf('失败')>=0 || msg.indexOf('出错')>=0) return 'var(--red)';
+  if(msg.indexOf('✅')>=0 || msg.indexOf('完成')>=0 || msg.indexOf('已')>=0) return 'var(--green)';
+  if(msg.indexOf('⚠️')>=0) return 'var(--yellow)';
+  if(msg.indexOf('📢')>=0 || msg.indexOf('播报')>=0) return 'var(--accent2)';
+  if(msg.indexOf('🤖')>=0) return 'var(--purple)';
+  if(msg.indexOf('📊')>=0 || msg.indexOf('⚡')>=0) return 'var(--green)';
   return '';
 }
 function refreshLog(){
