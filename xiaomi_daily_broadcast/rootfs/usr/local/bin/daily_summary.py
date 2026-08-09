@@ -270,7 +270,9 @@ def fetch_daily_temperature(temp_sensors, token, day):
     low=当天最小值, high=最大值, now=当天最后一个值。"""
     hist = fetch_history_range(temp_sensors, token, day, day + timedelta(days=1))
     out = {}
-    for eid, room in temp_sensors.items():
+    for eid, meta in temp_sensors.items():
+        # 🔑 value 可能是 dict（{room,usage}）或旧字符串——取房间名
+        room = meta.get("room", "") if isinstance(meta, dict) else meta
         vals = [v for _, v in hist.get(eid, [])]
         if vals:
             out[room] = {"low": min(vals), "high": max(vals), "now": vals[-1]}
@@ -575,7 +577,9 @@ def write_daily_snapshot(now, config, states, temp_history, device_energy,
     date_str = now.strftime("%Y-%m-%d")
 
     temp = {}
-    for eid, room in config["temp_sensors"].items():
+    for eid, meta in config["temp_sensors"].items():
+        # 🔑 value 可能是 dict（{room,usage}）或旧字符串——统一取房间名
+        room = meta.get("room", "") if isinstance(meta, dict) else meta
         cur = get_float(states, eid)
         hist = temp_history.get(eid, [])
         if cur is None and not hist:
@@ -588,7 +592,8 @@ def write_daily_snapshot(now, config, states, temp_history, device_energy,
         temp[room] = d
 
     humidity = {}
-    for eid, room in config["humidity_sensors"].items():
+    for eid, meta in config["humidity_sensors"].items():
+        room = meta.get("room", "") if isinstance(meta, dict) else meta
         v = get_float(states, eid)
         if v is not None and v <= 100:
             humidity[room] = round(v, 1)
