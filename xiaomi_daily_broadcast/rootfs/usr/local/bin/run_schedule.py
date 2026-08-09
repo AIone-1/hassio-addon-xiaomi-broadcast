@@ -372,7 +372,7 @@ def generate_week(section, cfg, dates=None):
                     days[m.group(1)] = t
         if not days:
             return {"ok": False, "days": {}, "error": "没解析出任何日期文案"}
-        log(f"🤖 已生成{name}（{len(days)}天）")
+        log(f"🤖 已生成{name}（共{len(days)}天文案）")
         return {"ok": True, "days": days, "error": ""}
     except Exception as e:
         log(f"⚠️ 生成{name}失败: {e}")
@@ -405,7 +405,11 @@ def llm_auto_refresh():
             if ts.get(prefix + "_mode") != "llm":
                 continue
             llm_days = ts.get(prefix + "_llm_days") or {}
-            auto = ts.get(prefix + "_llm_autoupdate") is True
+            auto_val = ts.get(prefix + "_llm_autoupdate")
+            # 自动更新方式：true=每天 / 'weekly'或false(旧)=每7天 / 'off'=关闭（互斥）
+            if auto_val == 'off':
+                continue  # 关闭自动更新
+            auto = auto_val is True
             if auto:
                 res = generate_one(prefix, cfg, today)      # 刷新当天
             elif today not in llm_days:
@@ -421,7 +425,7 @@ def llm_auto_refresh():
                     del merged[k]
                 ts[prefix + "_llm_days"] = merged
                 changed = True
-                log(f"🤖 自动更新{prefix}完成（{'当天' if auto else '一周'}，共{len(merged)}条）")
+                log(f"🤖 自动更新{prefix}完成（{'每天模式·刷新当天' if auto else '7天模式·更新一周'}，目前共{len(merged)}天文案）")
         if changed:
             save_edit_cfg({"template_settings": ts})
     except Exception as e:
@@ -543,7 +547,7 @@ def button_watcher():
 _RUN_COUNT = 0
 
 def run_broadcast(summary_type="daily", text_only=False):
-    """在独立线程里跑播报（force=True）。语音播报用锁防双播；只看文字不发声，不抢锁。"""
+    """在独立线程里跑播报（force=True）。语音播报用锁防双播；文字播报不发声，不抢锁。"""
     global _RUN_COUNT
     _RUN_COUNT += 1
     run_no = _RUN_COUNT
@@ -555,7 +559,7 @@ def run_broadcast(summary_type="daily", text_only=False):
                 return
             locked = True
         try:
-            log(f"📢 [run{run_no}] 手动触发播报: {summary_type}" + ("（只看文字）" if text_only else ""))
+            log(f"📢 [run{run_no}] 手动触发播报: {summary_type}" + ("（文字播报）" if text_only else ""))
             asyncio.run(ds.main(force=True, text_only=text_only, summary_type=summary_type))
             log(f"✅ [run{run_no}] 播报线程结束")
         except Exception as e:
@@ -1769,10 +1773,20 @@ function renderWeekPanel(ts){
   if(mode==='llm'){
     h+='<button type="button" class="btn-go" style="width:100%;padding:7px;margin-bottom:6px" onclick="genWeek('+active+')">🤖 生成未来7天'+g.name+'</button>';
     h+='<div style="font-size:11px;color:var(--dim);margin-bottom:8px">点上面的按钮才生成（切换模式不会自动生成）。生成内容单独存放，不影响手动填写的。</div>';
-    // 🔑 大模型模式：自动更新开关（开=每天零点刷新当天；关=每7天自动更新一回）
+    // 🔑 大模型模式：自动更新方式三选一（每天/每7天/关闭），互斥
     var autoKey=g.llmWeekKey.replace('_llm_days','_llm_autoupdate');
-    var autoOn=ts[autoKey]===true;
-    h+='<label class="eng-check" style="display:block;margin-bottom:8px"><input type="checkbox" data-tpl="'+autoKey+'" '+(autoOn?'checked':'')+' onchange="llmAutoToggle(this,\\''+autoKey+'\\')"> 自动更新：每天零点自动刷新当天的'+g.name+'（不勾选则每7天自动更新一回）</label>';
+    var autoMode=ts[autoKey];
+    // 兼容旧 bool：true=每天，false=每7天
+    if(autoMode===true) autoMode='daily';
+    else if(autoMode===false) autoMode='weekly';
+    else if(autoMode!=='daily' && autoMode!=='weekly' && autoMode!=='off') autoMode='weekly';
+    h+='<div class="eng-label" style="margin-top:0">自动更新方式</div>';
+    h+='<div class="fmt-hint">每天=每天零点刷新当天；每7天=窗口滚出后更新一周；关闭=手动点生成。三种互斥选一种。</div>';
+    h+='<select data-tpl="'+autoKey+'" onchange="llmAutoMode(this,\\''+autoKey+'\\')" style="width:100%;padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);margin-bottom:8px">'
+      +'<option value="daily"'+(autoMode==='daily'?' selected':'')+'>每天自动更新</option>'
+      +'<option value="weekly"'+(autoMode==='weekly'?' selected':'')+'>每7天自动更新</option>'
+      +'<option value="off"'+(autoMode==='off'?' selected':'')+'>关闭自动更新</option>'
+      +'</select>';
   }else{
     // 🔑 手动模式：7天循环开关（这7条每周循环用，不用每周改日期）
     var loopOn=ts[g.loopKey]===true;
@@ -1884,9 +1898,11 @@ function genWeek(si){
     .catch(function(){statusEl.textContent='❌ 生成失败（网络或超时）';});
 }
 // 🔑 大模型自动更新开关：开=每天零点刷新当天；关=每7天更新一回（实时写 CONFIG）
-function llmAutoToggle(el,autoKey){
+function llmAutoMode(el,autoKey){
   var ts=CONFIG.template_settings||{};
-  ts[autoKey]=el.checked;
+  // 三选一：daily=每天(true) / weekly=每7天 / off=关闭('off'，区别于旧false=每7天)
+  var v=el.value;
+  ts[autoKey]=(v==='daily')?true:v;
   CONFIG.template_settings=ts;
   markDirty();
 }
