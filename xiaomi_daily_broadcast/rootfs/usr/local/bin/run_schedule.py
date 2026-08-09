@@ -699,29 +699,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/history/day":
             date_str = q.get("date", [""])[0]
             self._send(200, json.dumps(history_day(date_str), ensure_ascii=False), "application/json")
-        elif path == "/history/delete":
-            # 🗑️ 删除某条历史记录（date+ts 匹配）
-            try:
-                date_str = q.get("date", [""])[0]
-                ts = q.get("ts", [""])[0]
-                if HISTORY_FILE.exists():
-                    lines = HISTORY_FILE.read_text().splitlines()
-                    keep = []
-                    for line in lines:
-                        try:
-                            r = json.loads(line)
-                        except Exception:
-                            keep.append(line)
-                            continue
-                        if r.get("date") == date_str and r.get("ts") == ts:
-                            continue  # 删除这条
-                        keep.append(line)
-                    HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
-                    self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
-                else:
-                    self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
-            except Exception as e:
-                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/history/anomalies":
             # ⚠️ 检测异常传感器数据：某设备单日耗电超阈值（正常家庭不可能）→ 标记该天为异常
             try:
@@ -824,6 +801,29 @@ class Handler(BaseHTTPRequestHandler):
                 with open(ds.TASK_LOG, "a") as f:
                     f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
                 self._send(200, json.dumps({"ok": True}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/history/delete":
+            # 🗑️ 删除某条历史记录（date+ts 匹配，POST）
+            try:
+                date_str = q.get("date", [""])[0]
+                ts = q.get("ts", [""])[0]
+                if HISTORY_FILE.exists():
+                    lines = HISTORY_FILE.read_text().splitlines()
+                    keep = []
+                    for line in lines:
+                        try:
+                            r = json.loads(line)
+                        except Exception:
+                            keep.append(line)
+                            continue
+                        if r.get("date") == date_str and r.get("ts") == ts:
+                            continue  # 删除这条
+                        keep.append(line)
+                    HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
+                    self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
+                else:
+                    self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/memo":
@@ -971,9 +971,11 @@ WEBUI_HTML = """<!DOCTYPE html>
   button.danger{background:transparent;border:1px solid var(--red);color:var(--red);padding:6px 10px;font-size:12px}
   select{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border);max-width:320px}
   #type,#engineSel{padding:10px 16px;font-size:14px;border-radius:8px;max-width:none;height:40px;line-height:1}
-  /* 🔑 播报页控件统一样式：和模板页一致（白底、14px、40px 高、圆角8px） */
+  /* 🔑 播报页控件统一样式：14px、40px 高、圆角8px */
+  /* 语音/文字/清空/实体按钮用纯白色底（--bg-inset 在日间模式是白色），选中态蓝底 */
   .row button,.row select{font-size:14px;height:40px;border-radius:8px}
-  .row button{background:var(--accent);color:#fff;border:none;padding:0 14px;line-height:1}
+  .row button{background:var(--bg-inset);color:var(--text);border:1px solid var(--border);padding:0 14px;line-height:1}
+  .row button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
   .row select{background:var(--bg-inset);color:var(--text);border:1px solid var(--border);padding:0 10px}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
   #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent);border:1px solid var(--accent);color:#fff}
@@ -2554,20 +2556,22 @@ function histPick(ds){
     list.innerHTML=h;
   }).catch(function(){list.innerHTML='<div style="color:var(--red)">加载失败</div>';});
 }
-// 🗑️ 删除某条历史记录（按日期+时间戳唯一）
+// 🗑️ 删除某条历史记录（按日期+时间戳唯一，直接删不二次确认）
 function histDelete(ds,idx){
-  if(!confirm('确定删除这条播报记录吗？')) return;
   fetch(BASE+'history/day?date='+ds+'&_='+Date.now()).then(function(r){return r.json()}).then(function(entries){
     var e=entries[idx];
     if(!e) return;
     var ts=e.ts;
     fetch(BASE+'history/delete?date='+ds+'&ts='+encodeURIComponent(ts),{method:'POST'}).then(function(r){return r.json()}).then(function(d){
       if(d.ok){
-        // 刷新当天列表 + 日历（若当天没记录了，移除日历圆点）
-        histPick(ds);
+        // 🔑 删除成功提示 + 刷新列表/日历
+        document.getElementById('histList').innerHTML='<div style="color:var(--green)">✅ '+esc(d.msg||'已删除')+'</div>';
+        setTimeout(function(){ histPick(ds); }, 600);
         histLoadCal();
+      }else{
+        document.getElementById('histList').innerHTML='<div style="color:var(--red)">❌ 删除失败</div>';
       }
-    }).catch(function(){});
+    }).catch(function(){document.getElementById('histList').innerHTML='<div style="color:var(--red)">❌ 删除失败</div>';});
   });
 }
 function histView(ds,idx){
