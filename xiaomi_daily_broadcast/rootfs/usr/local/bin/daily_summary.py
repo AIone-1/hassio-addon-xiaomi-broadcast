@@ -298,11 +298,20 @@ def ts_on(config, section):
     return True
 
 
-def ts_fmt(config, key, default):
-    """读句式模板（template_settings.formats.<key>），空或缺用默认。
-    用户可配中间板块的播报措辞，用占位符 {items}/{total}/{count}/{pm}/{extra} 等拼句子。"""
+def ts_fmt(config, key, default, sub=None):
+    """读句式模板（template_settings.formats.<key>）。
+    formats.<key> 可以是字符串（旧格式，整条模板）或 dict（新格式，字段级配置）。
+    sub 指定取 dict 的哪个字段（prefix/item/alert 等）；非 dict 时 sub 忽略。
+    空/缺返回 default。"""
     try:
         v = (config.get("template_settings") or {}).get("formats", {}).get(key)
+        if isinstance(v, dict):
+            if sub:
+                val = v.get(sub)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+                return default
+            return v
         if isinstance(v, str) and v.strip():
             return v.strip()
     except Exception:
@@ -1401,6 +1410,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         # ─────────────────────────────────────────
         temp_parts = []
         temp_alerts = []
+        temp_entries = []
         if ts_on(config, "temp"):
             temp_high = ts(config, "temp_high_alert", 32)
             temp_diff = ts(config, "temp_constant_diff", 1)
@@ -1411,6 +1421,7 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if cur is None:
                     continue
                 entry = {"room": room, "now": round(cur, 1)}
+                hi = lo = None
                 if hist:
                     hi, lo = max(hist), min(hist)
                     entry["low"], entry["high"] = round(lo, 1), round(hi, 1)
@@ -1421,17 +1432,42 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 else:
                     temp_parts.append(f"{room}当前{cur:.0f}度")
                 if cur > temp_high and not (excl_balcony and "阳台" in room):
-                    temp_alerts.append(f"{room} {cur:.0f}度偏高")
+                    temp_alerts.append((room, cur))
+                temp_entries.append(entry)
                 report["temperature"].append(entry)
         report["temp_alerts"] = temp_alerts
 
         if temp_parts:
-            _temp_tpl = ts_fmt(config, "temp", "温度：{items}{extra}")
-            _temp_items = "，".join(temp_parts)
-            _temp_extra = ""
-            if temp_alerts:
-                _temp_extra = "，注意：" + "，".join(temp_alerts) + "，建议通风降温"
-            lines.append(_temp_tpl.replace("{items}", _temp_items).replace("{extra}", _temp_extra) + "。")
+            # 🔑 字段级句式：prefix=前缀 item=每条内容 alert=高温提醒（dict）；旧字符串格式整条模板兼容
+            _tp = ts_fmt(config, "temp", None)
+            if isinstance(_tp, dict):
+                _t_prefix = ts_fmt(config, "temp", "温度：", "prefix")
+                _t_item = ts_fmt(config, "temp", "", "item")
+                _t_alert = ts_fmt(config, "temp", "", "alert")
+                if _t_item:
+                    # 每条用用户模板：{room} {now} {low} {high}
+                    _t_items = "，".join(
+                        _t_item.replace("{room}", e["room"]).replace("{now}", f"{e['now']:.0f}")
+                                .replace("{low}", f"{e.get('low', 0):.0f}" if e.get('low') is not None else "")
+                                .replace("{high}", f"{e.get('high', 0):.0f}" if e.get('high') is not None else "")
+                        for e in temp_entries)
+                else:
+                    _t_items = "，".join(temp_parts)
+                _t_extra = ""
+                if temp_alerts:
+                    if _t_alert:
+                        _t_extra = "，" + "，".join(
+                            _t_alert.replace("{room}", r).replace("{now}", f"{c:.0f}") for r, c in temp_alerts)
+                    else:
+                        _t_extra = "，注意：" + "、".join(f"{r} {c:.0f}度偏高" for r, c in temp_alerts) + "，建议通风降温"
+                lines.append(_t_prefix + _t_items + _t_extra + "。")
+            else:
+                # 旧格式字符串模板（整条）兼容
+                _t_tpl = _tp or "温度：{items}{extra}"
+                _t_extra = ""
+                if temp_alerts:
+                    _t_extra = "，注意：" + "、".join(f"{r} {c:.0f}度偏高" for r, c in temp_alerts) + "，建议通风降温"
+                lines.append(_t_tpl.replace("{items}", "，".join(temp_parts)).replace("{extra}", _t_extra) + "。")
 
         # 2. 💧 湿度（单独一条）
         # ─────────────────────────────────────────
@@ -1450,14 +1486,35 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             report["humidity_wet"] = wet
             if hums:
                 # 播报每个房间湿度值，如"湿度：客厅50%，卧室45%"
-                _hum_tpl = ts_fmt(config, "humidity", "湿度：{items}{extra}")
-                _hum_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
-                _hum_extra = ""
-                if dry:
-                    _hum_extra += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
-                if wet:
-                    _hum_extra += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
-                hum_line = _hum_tpl.replace("{items}", _hum_items).replace("{extra}", _hum_extra)
+                _hp = ts_fmt(config, "humidity", None)
+                if isinstance(_hp, dict):
+                    _h_prefix = ts_fmt(config, "humidity", "湿度：", "prefix")
+                    _h_item = ts_fmt(config, "humidity", "", "item")
+                    _h_dry = ts_fmt(config, "humidity", "", "dry")
+                    _h_wet = ts_fmt(config, "humidity", "", "wet")
+                    if _h_item:
+                        _h_items = "，".join(_h_item.replace("{room}", r).replace("{hum}", f"{h:.0f}") for r, h in hums.items())
+                    else:
+                        _h_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
+                    _h_extra = ""
+                    if dry and _h_dry:
+                        _h_extra += "，" + "、".join(_h_dry.replace("{room}", r) for r in dry)
+                    elif dry:
+                        _h_extra += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
+                    if wet and _h_wet:
+                        _h_extra += "，" + "、".join(_h_wet.replace("{room}", r) for r in wet)
+                    elif wet:
+                        _h_extra += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+                    hum_line = _h_prefix + _h_items + _h_extra
+                else:
+                    _hum_tpl = _hp or "湿度：{items}{extra}"
+                    _hum_items = "，".join(f"{r}{h:.0f}%" for r, h in hums.items())
+                    _hum_extra = ""
+                    if dry:
+                        _hum_extra += "，" + "、".join(dry) + "比较干燥，可以开加湿器"
+                    if wet:
+                        _hum_extra += "，" + "、".join(wet) + "湿度偏高，注意通风除湿"
+                    hum_line = _hum_tpl.replace("{items}", _hum_items).replace("{extra}", _hum_extra)
             elif dry or wet:
                 hum_line = "，" + "，".join((["、".join(dry) + "比较干燥"] if dry else []) + (["、".join(wet) + "湿度偏高"] if wet else []))
             if hum_line:
@@ -1488,14 +1545,35 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
             ranked = sorted(device_energy.items(), key=lambda x: -x[1])
             top3 = [(n, k) for n, k in ranked[:top_n] if k > top_min]
             if total_kwh > show_th:
-                _pow_tpl = ts_fmt(config, "power", "耗电量：共{total}度{top}{unread}")
-                _pow_top = ""
-                if top3:
-                    _pow_top = "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(f"{n}耗电{k:.1f}度" for n, k in top3)
-                _pow_unread = ""
-                if unread:
-                    _pow_unread = f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
-                power_line = _pow_tpl.replace("{total}", f"{total_kwh:.1f}").replace("{top}", _pow_top).replace("{unread}", _pow_unread)
+                _pp = ts_fmt(config, "power", None)
+                if isinstance(_pp, dict):
+                    _p_prefix = ts_fmt(config, "power", "耗电量：共{total}度", "prefix")
+                    _p_top_item = ts_fmt(config, "power", "", "top_item")
+                    _p_top_phrase = ts_fmt(config, "power", "耗电前{num}：{list}", "top")
+                    _p_unread = ts_fmt(config, "power", "", "unread")
+                    _pow_top = ""
+                    if top3:
+                        _top_list = "，".join(_p_top_item.replace("{device}", n).replace("{kwh}", f"{k:.1f}") for n, k in top3) if _p_top_item else "，".join(f"{n}耗电{k:.1f}度" for n, k in top3)
+                        _p_phr = _p_top_phrase.replace("{num}", "三" if top_n == 3 else str(top_n))
+                        if "{list}" in _p_phr:
+                            _pow_top = "，" + _p_phr.replace("{list}", _top_list)
+                        else:
+                            _pow_top = "，" + _p_phr + "：" + _top_list
+                    _pow_unread = ""
+                    if unread and _p_unread:
+                        _pow_unread = "，" + _p_unread.replace("{count}", str(len(unread))).replace("{items}", "、".join(unread[:4]))
+                    elif unread:
+                        _pow_unread = f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
+                    power_line = _p_prefix.replace("{total}", f"{total_kwh:.1f}") + _pow_top + _pow_unread
+                else:
+                    _pow_tpl = _pp or "耗电量：共{total}度{top}{unread}"
+                    _pow_top = ""
+                    if top3:
+                        _pow_top = "，耗电前" + ("三" if top_n == 3 else str(top_n)) + "：" + "，".join(f"{n}耗电{k:.1f}度" for n, k in top3)
+                    _pow_unread = ""
+                    if unread:
+                        _pow_unread = f"，另有{len(unread)}个用电设备读不到数据（{'、'.join(unread[:4])}" + ("等" if len(unread) > 4 else "") + "），未计入"
+                    power_line = _pow_tpl.replace("{total}", f"{total_kwh:.1f}").replace("{top}", _pow_top).replace("{unread}", _pow_unread)
             elif total_kwh > 0:
                 power_line = f"耗电量：不到{min(0.1, save_th):.1f}度，非常省电"
             report["power"] = {
@@ -1529,11 +1607,33 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
                 if v is not None and v > high_alert:
                     high_devices.append((_power_label(eid, meta), v))
             if now_parts:
-                _now_tpl = ts_fmt(config, "power_now", "实时功率：{items}{extra}")
-                _now_extra = ""
-                if high_devices:
-                    _now_extra = "，注意：" + "、".join(f"{n} {p:.0f}瓦" for n, p in high_devices) + "功率较高，不用时可以关掉"
-                power_now_line = _now_tpl.replace("{items}", "，".join(now_parts)).replace("{extra}", _now_extra)
+                # 每条设备的 label + 瓦数
+                now_pairs = [(_power_label(eid, meta), get_float(states, eid))
+                             for eid, meta in config.get("power_now", {}).items()
+                             if not eid.startswith("_")]
+                now_pairs = [(n, w) for n, w in now_pairs if w is not None and w > 0]
+                _np = ts_fmt(config, "power_now", None)
+                if isinstance(_np, dict):
+                    _n_prefix = ts_fmt(config, "power_now", "实时功率：", "prefix")
+                    _n_item = ts_fmt(config, "power_now", "", "item")
+                    _n_alert = ts_fmt(config, "power_now", "", "alert")
+                    if _n_item:
+                        _n_items = "，".join(_n_item.replace("{device}", n).replace("{w}", f"{w:.0f}") for n, w in now_pairs)
+                    else:
+                        _n_items = "，".join(f"{n} {w:.0f}瓦" for n, w in now_pairs)
+                    _n_extra = ""
+                    if high_devices:
+                        if _n_alert:
+                            _n_extra = "，" + "、".join(_n_alert.replace("{device}", n).replace("{w}", f"{p:.0f}") for n, p in high_devices)
+                        else:
+                            _n_extra = "，注意：" + "、".join(f"{n} {p:.0f}瓦" for n, p in high_devices) + "功率较高，不用时可以关掉"
+                    power_now_line = _n_prefix + _n_items + _n_extra
+                else:
+                    _now_tpl = _np or "实时功率：{items}{extra}"
+                    _now_extra = ""
+                    if high_devices:
+                        _now_extra = "，注意：" + "、".join(f"{n} {p:.0f}瓦" for n, p in high_devices) + "功率较高，不用时可以关掉"
+                    power_now_line = _now_tpl.replace("{items}", "，".join(now_parts)).replace("{extra}", _now_extra)
             report["power_now"] = {"now": [[n, p] for n, p in high_devices] if high_devices else []}
         if power_now_line:
             lines.append(power_now_line + "。")
@@ -1622,8 +1722,17 @@ async def main(force=False, text_only=False, summary_type=None, print_report=Fal
         report["lights_on"] = lights_on
         if ts_on(config, "lights") and lights_cfg:
             if lights_on:
-                _li_tpl = ts_fmt(config, "lights", "灯光：{items}还亮着，不需要的话可以关掉")
-                lines.append(_li_tpl.replace("{items}", "、".join(lights_on)) + "。")
+                _lp = ts_fmt(config, "lights", None)
+                if isinstance(_lp, dict):
+                    _l_prefix = ts_fmt(config, "lights", "灯光：", "prefix")
+                    _l_item = ts_fmt(config, "lights", "", "item")
+                    _l_suffix = ts_fmt(config, "lights", "", "suffix")
+                    _l_items = "、".join(_l_item.replace("{name}", n) for n in lights_on) if _l_item else "、".join(lights_on)
+                    _l_suf = _l_suffix or "还亮着，不需要的话可以关掉"
+                    lines.append(_l_prefix + _l_items + _l_suf + "。")
+                else:
+                    _li_tpl = _lp or "灯光：{items}还亮着，不需要的话可以关掉"
+                    lines.append(_li_tpl.replace("{items}", "、".join(lights_on)) + "。")
             else:
                 lines.append("所有主灯都已关闭，省电又环保。")
 
