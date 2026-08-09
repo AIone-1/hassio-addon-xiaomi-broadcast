@@ -135,14 +135,15 @@
 <div class="page" id="page-cfg">
   <div class="card">
     <div class="sec-title">🎙️ 播报音箱</div>
-    <div class="sec-desc">选择小米音箱的 notify 实体（支持的所有音箱都会列出）</div>
+    <div class="sec-desc">选择要播报的音箱（只列出智能音箱）。如果找不到你的音箱，可在加载项设置里手动填 notify 实体。</div>
     <div class="search-row">
       <select id="cfg-speaker"></select>
     </div>
+    <div class="fmt-hint">💡 只有名字含"智能音箱"的才是真正的音箱，手机/摄像机/电饭煲等不算。选错的话播报不会响。</div>
   </div>
   <div class="card">
     <div class="sec-title">🔧 实体映射</div>
-    <div class="sec-desc">从下拉选择你家的传感器实体，填房间名。保存后生效。</div>
+    <div class="sec-desc">把家里的传感器配到各分类。每行：实体id → 播报名（可空）→ 房间名 → 用途。拖动 ⠿ 可调整播报顺序。状态徽章显示实时值。</div>
     <div id="sections"></div>
     <button onclick="saveCfg()" style="margin-top:12px;width:100%">💾 保存配置</button>
     <div class="save-status" id="cfgStatus"></div>
@@ -223,13 +224,13 @@ function toggleTheme(){
 var ENTITIES=[], CONFIG={};
 // kw: 关键词数组——只显示实体 id/名称含这些词的（区分温度/湿度/用电等，避免 500+ 混在一起）
 var SECTIONS=[
-  {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'家里各房间温度',domains:['sensor'],kw:['temperature','温度','t2','temp'],room:true},
-  {key:'humidity_sensors',title:'💧 湿度传感器',desc:'家里各房间湿度',domains:['sensor'],kw:['humidity','湿度','relative_humidity'],room:true},
-  {key:'power_sensors',title:'⚡ 用电（今日电量）',desc:'用 *_power_cost_today 实体（今日累计 kWh）',domains:['sensor'],kw:['power_cost_today','今日电量','耗电'],room:true},
-  {key:'power_now',title:'🔌 实时功率（可选）',desc:'用 *_electric_power 实体（单位 W，高功耗提醒）',domains:['sensor'],kw:['electric_power','power','功率'],room:true},
-  {key:'lights',title:'💡 灯光',desc:'家里灯，播报"没关灯"提醒',domains:['light'],room:true},
-  {key:'doors',title:'🚪 门窗',desc:'on=开，播报安全巡检',domains:['binary_sensor'],kw:['contact','门','窗','magnet'],room:true},
-  {key:'important_devices',title:'⚠️ 重要设备',desc:'空调/风扇等，离线3天内播报提醒',domains:['climate','fan','media_player','switch'],room:true},
+  {key:'temp_sensors',title:'🌡️ 温度传感器',desc:'各房间温度。填播报名可区分（如"客厅冰箱"/"客厅室温"），高温/低温报警用',domains:['sensor'],kw:['temperature','温度','t2','temp'],room:true},
+  {key:'humidity_sensors',title:'💧 湿度传感器',desc:'各房间湿度，干燥/过湿提醒。常湿的房间（卫生间）可在模板配置里排除',domains:['sensor'],kw:['humidity','湿度','relative_humidity'],room:true},
+  {key:'power_sensors',title:'⚡ 用电（今日电量）',desc:'用 *_power_cost_today 实体（今日累计 kWh），多个设备自动求和 + 耗电排行',domains:['sensor'],kw:['power_cost_today','今日电量','耗电'],room:true},
+  {key:'power_now',title:'🔌 实时功率（可选）',desc:'用 *_electric_power 实体（单位 W），播报总功率 + 高功耗提醒。不填则不报',domains:['sensor'],kw:['electric_power','power','功率'],room:true},
+  {key:'lights',title:'💡 灯光',desc:'家里灯，播报"没关灯"提醒。不填则不报',domains:['light'],room:true},
+  {key:'doors',title:'🚪 门窗',desc:'on=开，播报安全巡检（门没关提醒）。不填则不报',domains:['binary_sensor'],kw:['contact','门','窗','magnet'],room:true},
+  {key:'important_devices',title:'⚠️ 重要设备',desc:'空调/风扇等，离线时播报提醒（离线几天内提醒可在模板配置里调）',domains:['climate','fan','media_player','switch'],room:true},
 ];
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -291,11 +292,15 @@ function optsFor(domain, cur){
 // 填充音箱下拉：列出所有 notify. 实体（可播报的音箱）
 function fillSpeakerSelect(cur){
   var sel=document.getElementById('cfg-speaker');
+  // 🔑 只列出音箱：名字含"智能音箱"的 notify 实体（排除手机/摄像机/电饭煲等非音箱的 notify）
   var opts=[];
   ENTITIES.forEach(function(e){
-    if(e.domain==='notify') opts.push(e);
+    if(e.domain!=='notify') return;
+    var name=e.name||'';
+    var isSpeaker=(name.indexOf('智能音箱')>=0 || e.entity_id.indexOf('play_text')>=0);
+    if(isSpeaker) opts.push(e);
   });
-  if(!opts.length){ sel.innerHTML='<option value="">(未找到 notify 实体)</option>'; return; }
+  if(!opts.length){ sel.innerHTML='<option value="">(未找到音箱，请在加载项设置里手动填 notify 实体)</option>'; return; }
   var h='<option value="">选择音箱...</option>';
   opts.forEach(function(e){
     var name=e.name?e.name+' ('+e.entity_id+')':e.entity_id;
@@ -692,9 +697,14 @@ function renderTplCfg(){
   var secs=ts.sections||{};
   var h='';
   TPL_GROUPS.forEach(function(g,gi){
-    // 🔑 播报文案面板：问候语/结束语/小贴士 三个子 tab 共用一个模式切换 + 7 天网格
+    // 🔑 播报文案面板：可折叠（默认收起），标题点击展开/收起
     if(g.weekPanel){
-      h+=renderWeekPanel(ts);
+      var wpOpen=ts._weekPanelOpen===true;
+      h+='<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">';
+      h+='<div onclick="toggleWeekPanel()" style="padding:10px 12px;background:var(--bg-inset);cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
+      h+='<span style="font-weight:600;font-size:13px">📝 播报文案</span><span>'+(wpOpen?'▾':'▸')+'</span></div>';
+      if(wpOpen) h+=renderWeekPanel(ts);
+      h+='</div>';
       return;
     }
     // 默认折叠（只有播报文案恒开）；用户展开过的保持展开
@@ -753,9 +763,6 @@ function renderWeekPanel(ts){
   var g=sub[active];
   var mode=ts[g.modeKey]||'manual';
   var h='';
-  h+='<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">';
-  h+='<div style="padding:10px 12px;background:var(--bg-inset);display:flex;justify-content:space-between;align-items:center">';
-  h+='<span style="font-weight:600;font-size:13px">📝 播报文案</span><span style="font-size:11px;color:var(--dim)">问候语 · 结束语 · 小贴士</span></div>';
   h+='<div style="padding:12px">';
   // 子 tab（问候语/结束语/小贴士）
   h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
@@ -813,12 +820,19 @@ function renderWeekPanel(ts){
     h+='</div>';
   }
   h+='<div style="font-size:11px;color:var(--dim);margin-top:8px">ℹ️ '+g.help+'</div>';
-  h+='</div></div>';
+  h+='</div>';
   return h;
 }
 function toggleTplFold(gi){
   var ts=CONFIG.template_settings||{};
   ts['_fold'+gi] = !(ts['_fold'+gi]||false);
+  CONFIG.template_settings=ts;
+  renderTplCfg();
+}
+// 🔑 播报文案面板折叠开关（默认收起，点开才展开）
+function toggleWeekPanel(){
+  var ts=CONFIG.template_settings||{};
+  ts._weekPanelOpen=!(ts._weekPanelOpen===true);
   CONFIG.template_settings=ts;
   renderTplCfg();
 }
