@@ -980,6 +980,15 @@ WEBUI_HTML = """<!DOCTYPE html>
     </div>
     <div id="status">就绪</div>
   </div>
+  <!-- 📋 播报栏目：哪些内容播报（大模型和模板都生效），改完自动保存 -->
+  <div class="card" id="sectionsCard">
+    <div class="sec-title-row">
+      <div class="sec-title">📋 播报栏目</div>
+      <span class="fmt-hint" style="margin:0">选哪些内容播报（模板/大模型都生效）</span>
+    </div>
+    <div id="mainSections" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:4px;margin-top:8px"></div>
+    <div class="save-status" id="secStatus"></div>
+  </div>
   <div class="card" id="entitiesBox" style="display:none"></div>
   <div class="card" id="textCard" style="display:none">
     <div class="sec-title">📝 播报文字</div>
@@ -1534,23 +1543,6 @@ var TPL_GROUPS=[
     {k:'fmt_task',label:'任务',ph:'{count}任务数 {extra}档位。示例：任务：完成{count}个终端任务{extra}',def:'任务：完成{count}个终端任务{extra}',type:'text'},
     {k:'fmt_todo',label:'待办',ph:'{items}待办列表。示例：待办与备忘：{items}',def:'待办与备忘：{items}',type:'text'},
     {k:'fmt_fault',label:'设备故障',ph:'{count}台数 {items}设备。示例：有{count}台设备离线：{items}，有空检查一下',def:'有{count}台设备离线：{items}，有空检查一下',type:'text'},
-  ]},
-  {title:'板块开关',fields:[
-    {k:'sec_greeting',label:'问候语',def:true,type:'check'},
-    {k:'sec_ending',label:'结束语',def:true,type:'check'},
-    {k:'sec_end_marker',label:'播报结束',def:false,type:'check'},
-    {k:'sec_temp',label:'温度',def:true,type:'check'},
-    {k:'sec_humidity',label:'湿度',def:true,type:'check'},
-    {k:'sec_power',label:'耗电量',def:true,type:'check'},
-    {k:'sec_power_now',label:'实时功率',def:true,type:'check'},
-    {k:'sec_security',label:'安全',def:true,type:'check'},
-    {k:'sec_pm25',label:'空气质量',def:true,type:'check'},
-    {k:'sec_lights',label:'灯光',def:true,type:'check'},
-    {k:'sec_task',label:'终端任务',def:true,type:'check'},
-    {k:'sec_todo',label:'待办备忘',def:true,type:'check'},
-    {k:'sec_fault',label:'设备故障',def:true,type:'check'},
-    {k:'sec_enc',label:'鼓励语',def:false,type:'check'},
-    {k:'sec_tip',label:'小贴士',def:true,type:'check'},
   ]},
 ];
 /* ─── 大模型配置 ─── */
@@ -2112,6 +2104,48 @@ function loadEngine(){
     if(d && d.mode) document.getElementById('engineSel').value=d.mode;
   }).catch(function(){});
 }
+// 📋 播报栏目（板块开关，模板/大模型都生效）——定义 + 渲染 + 变更保存
+var MAIN_SECTIONS=[
+  {k:'sec_greeting',label:'问候语',def:true},
+  {k:'sec_ending',label:'结束语',def:true},
+  {k:'sec_end_marker',label:'播报结束',def:false},
+  {k:'sec_temp',label:'温度',def:true},
+  {k:'sec_humidity',label:'湿度',def:true},
+  {k:'sec_power',label:'耗电量',def:true},
+  {k:'sec_power_now',label:'实时功率',def:true},
+  {k:'sec_security',label:'安全',def:true},
+  {k:'sec_pm25',label:'空气质量',def:true},
+  {k:'sec_lights',label:'灯光',def:true},
+  {k:'sec_task',label:'终端任务',def:true},
+  {k:'sec_todo',label:'待办备忘',def:true},
+  {k:'sec_fault',label:'设备故障',def:true},
+  {k:'sec_enc',label:'鼓励语',def:false},
+  {k:'sec_tip',label:'小贴士',def:true},
+];
+function renderMainSections(){
+  var box=document.getElementById('mainSections');
+  if(!box) return;
+  var secs=((CONFIG&&CONFIG.template_settings)||{}).sections||{};
+  var h='';
+  MAIN_SECTIONS.forEach(function(s){
+    var val=(secs[s.k.slice(4)]!==undefined)?secs[s.k.slice(4)]:s.def;
+    h+='<label class="eng-check" style="justify-content:flex-start;padding:4px 6px"><input type="checkbox" data-sec="'+s.k+'" '+(val?'checked':'')+' onchange="saveMainSection(this)"> '+s.label+'</label>';
+  });
+  box.innerHTML=h;
+}
+// 🔑 改播报栏目立即保存（不用点按钮）
+function saveMainSection(cb){
+  var ts=CONFIG.template_settings||{};
+  if(!ts.sections) ts.sections={};
+  ts.sections[cb.getAttribute('data-sec').slice(4)]=cb.checked;
+  CONFIG.template_settings=ts;
+  fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:{template_settings:ts}})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      document.getElementById('secStatus').textContent = d.ok?('✅ 已保存：'+(cb.checked?'开启':'关闭')):'❌ 保存失败';
+    })
+    .catch(function(){document.getElementById('secStatus').textContent='❌ 保存失败';});
+}
 function changeEngine(){
   var mode=document.getElementById('engineSel').value;
   fetch(BASE+'engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode})})
@@ -2385,6 +2419,14 @@ loadStats();
 // 默认全部灰边（不选中任何按钮）
 setActive('');
 loadEngine();
+// 📋 加载播报栏目开关（拉配置渲染，切到其他 tab 后回来也刷新）
+function loadMainSections(){
+  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){return r.json()}).then(function(d){
+    CONFIG=d||{};
+    renderMainSections();
+  }).catch(function(){});
+}
+loadMainSections();
 // 点击实体框以外区域关闭实体弹窗
 document.addEventListener('click',function(ev){
   var box=document.getElementById('entitiesBox');
