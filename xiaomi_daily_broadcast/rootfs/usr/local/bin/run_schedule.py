@@ -720,52 +720,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"anomalies": anomalies}, ensure_ascii=False), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
-        elif path == "/fix-anomaly":
-            # 🛠️ 修复异常：异常设备的用电记录用前两天的平均值替换（不是删除）
-            # 例：卧室电源2 某天 55 度（传感器异常）→ 用前两天正常值平均修正
-            try:
-                date_str = q.get("date", [""])[0]
-                snaps = ds.load_snapshots()
-                # 按日期找该设备前两天的正常值（排除当天、排除异常值>30）
-                def _prior_avg(dev_label):
-                    vals = []
-                    for d in sorted(snaps.keys()):
-                        if d >= date_str:
-                            continue
-                        dd = (snaps[d].get("power") or {}).get("by_device") or {}
-                        v = dd.get(dev_label)
-                        if isinstance(v, (int, float)) and 0 <= v <= 30:  # 只取正常值
-                            vals.append(v)
-                        if len(vals) >= 2:
-                            break
-                    return (sum(vals) / len(vals)) if vals else None
-                if date_str in snaps:
-                    s = snaps[date_str]
-                    p = s.get("power") or {}
-                    by_dev = p.get("by_device") or {}
-                    # 找出异常的设备（单日耗电超30度）
-                    bad_devs = [lb for lb, k in by_dev.items() if isinstance(k,(int,float)) and k > 30]
-                    fixed = []
-                    for lb in bad_devs:
-                        avg = _prior_avg(lb)
-                        if avg is not None:
-                            by_dev[lb] = round(avg, 2)   # 用前两天平均值替换异常值
-                            fixed.append(f"{lb}:{by_dev[lb]}度")
-                        else:
-                            # 无历史正常值 → 删除该设备当天记录
-                            del by_dev[lb]
-                            fixed.append(f"{lb}:无历史删除")
-                    # 重算 total
-                    p["total_kwh"] = round(sum(by_dev.values()), 1)
-                    s["power"] = p
-                    snaps[date_str] = s
-                    ds.save_snapshots(snaps)
-                    msg = f"已修复 {date_str}：{'、'.join(fixed) if fixed else '无异常设备'}"
-                else:
-                    msg = f"{date_str} 无快照数据"
-                self._send(200, json.dumps({"ok": True, "msg": msg}), "application/json")
-            except Exception as e:
-                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/entities/buttons":
             # 播报按钮实体列表（供用户在自动化里引用）
             self._send(200, json.dumps([{"name": b["name"], "entity": b["entity"], "type": b["type"]} for b in BUTTONS], ensure_ascii=False), "application/json")
@@ -846,6 +800,52 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, json.dumps({"ok": True, "msg": f"已删除 {date_str} {ts} 的记录"}), "application/json")
                 else:
                     self._send(200, json.dumps({"ok": True, "msg": "无历史文件"}), "application/json")
+            except Exception as e:
+                self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
+        elif path == "/fix-anomaly":
+            # 🛠️ 修复异常（POST）：异常设备的用电记录用前两天的平均值替换（不是删除）
+            # 例：卧室电源2 某天 55 度（传感器异常）→ 用前两天正常值平均修正
+            try:
+                date_str = q.get("date", [""])[0]
+                snaps = ds.load_snapshots()
+                # 按日期找该设备前两天的正常值（排除当天、排除异常值>30）
+                def _prior_avg(dev_label):
+                    vals = []
+                    for d in sorted(snaps.keys()):
+                        if d >= date_str:
+                            continue
+                        dd = (snaps[d].get("power") or {}).get("by_device") or {}
+                        v = dd.get(dev_label)
+                        if isinstance(v, (int, float)) and 0 <= v <= 30:  # 只取正常值
+                            vals.append(v)
+                        if len(vals) >= 2:
+                            break
+                    return (sum(vals) / len(vals)) if vals else None
+                if date_str in snaps:
+                    s = snaps[date_str]
+                    p = s.get("power") or {}
+                    by_dev = p.get("by_device") or {}
+                    # 找出异常的设备（单日耗电超30度）
+                    bad_devs = [lb for lb, k in by_dev.items() if isinstance(k,(int,float)) and k > 30]
+                    fixed = []
+                    for lb in bad_devs:
+                        avg = _prior_avg(lb)
+                        if avg is not None:
+                            by_dev[lb] = round(avg, 2)   # 用前两天平均值替换异常值
+                            fixed.append(f"{lb}:{by_dev[lb]}度")
+                        else:
+                            # 无历史正常值 → 删除该设备当天记录
+                            del by_dev[lb]
+                            fixed.append(f"{lb}:无历史删除")
+                    # 重算 total
+                    p["total_kwh"] = round(sum(by_dev.values()), 1)
+                    s["power"] = p
+                    snaps[date_str] = s
+                    ds.save_snapshots(snaps)
+                    msg = f"已修复 {date_str}：{'、'.join(fixed) if fixed else '无异常设备'}"
+                else:
+                    msg = f"{date_str} 无快照数据"
+                self._send(200, json.dumps({"ok": True, "msg": msg}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/memo":
@@ -1183,6 +1183,12 @@ WEBUI_HTML = """<!DOCTYPE html>
     </div>
     <div class="cal-grid" id="histCal"></div>
   </div>
+  <!-- 🛠️ 修复异常放最上面（历史记录上方，一进来就看到） -->
+  <div class="card">
+    <button class="danger" onclick="fixAnomaly()">🛠️ 修复异常传感器数据</button>
+    <div class="fmt-hint" style="margin-top:4px">日历上带 ⚠️ 的日期表示有传感器异常（如某设备一天耗电几十度，不正常）。选一个 ⚠️ 日期点这个修复（用该设备前两天正常值的平均值替换异常值）。</div>
+    <div class="save-status" id="fixStatus"></div>
+  </div>
   <div class="card">
     <div id="histList" style="font-size:12px;color:#8b949e">选择日期查看播报记录</div>
   </div>
@@ -1190,11 +1196,6 @@ WEBUI_HTML = """<!DOCTYPE html>
     <button class="danger" onclick="clearSnapshot()">🗑️ 清除当天的统计数据</button>
     <div class="fmt-hint" style="margin-top:4px">周期统计（周/月/年）用的每日数据快照。如果今天的数据异常（比如测试过），点这个只清除今天的，不影响之前正常的数据。</div>
     <div class="save-status" id="snapStatus"></div>
-  </div>
-  <div class="card">
-    <button class="danger" onclick="fixAnomaly()">🛠️ 修复异常传感器数据</button>
-    <div class="fmt-hint" style="margin-top:4px">日历上带 ⚠️ 的日期表示有传感器异常（如某设备一天耗电几十度，不正常）。点这个删掉异常设备当天的记录（⚠️ 表示修复当前选中的日期；选一个 ⚠️ 日期再点）。</div>
-    <div class="save-status" id="fixStatus"></div>
   </div>
 </div>
 
