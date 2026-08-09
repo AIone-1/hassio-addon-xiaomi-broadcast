@@ -13,6 +13,4 @@
 - [功能总览与信息](xiaomi_daily_broadcast/README.md)
 - [详细使用文档](xiaomi_daily_broadcast/DOCS.md)
 
-## 📄 License
-
-MIT
+> 本项目目前暂不开源，保留所有权利。仅供个人使用，未经许可请勿分发或商用。
