@@ -898,6 +898,7 @@ WEBUI_HTML = """<!DOCTYPE html>
   <div class="tab on" id="tabMain" onclick="showPage('main')">📢 播报</div>
   <div class="tab" id="tabCfg" onclick="showPage('cfg')">⚙️ 传感器配置</div>
   <div class="tab" id="tabTpl" onclick="showPage('tpl')">🧩 模板配置</div>
+  <div class="tab" id="tabLlm" onclick="showPage('llm')">🤖 大模型配置</div>
   <div class="tab" id="tabHist" onclick="showPage('hist')">📜 历史</div>
 </div>
 
@@ -959,6 +960,17 @@ WEBUI_HTML = """<!DOCTYPE html>
     <div id="tplBox"></div>
     <button onclick="saveTpl()" style="margin-top:12px;width:100%">💾 保存模板配置</button>
     <div class="save-status" id="tplStatus"></div>
+  </div>
+</div>
+
+<!-- 大模型配置页 -->
+<div class="page" id="page-llm">
+  <div class="card">
+    <div class="sec-title">🤖 大模型配置</div>
+    <div class="sec-desc">配置大模型生成的提示语（system prompt）和参数。留空用默认。改完点"保存大模型配置"。</div>
+    <div id="llmBox"></div>
+    <button onclick="saveLlm()" style="margin-top:12px;width:100%">💾 保存大模型配置</button>
+    <div class="save-status" id="llmStatus"></div>
   </div>
 </div>
 
@@ -1067,14 +1079,17 @@ function showPage(p){
   document.getElementById('tabMain').className='tab'+(p==='main'?' on':'');
   document.getElementById('tabCfg').className='tab'+(p==='cfg'?' on':'');
   document.getElementById('tabTpl').className='tab'+(p==='tpl'?' on':'');
+  document.getElementById('tabLlm').className='tab'+(p==='llm'?' on':'');
   document.getElementById('tabHist').className='tab'+(p==='hist'?' on':'');
   document.getElementById('page-main').className='page'+(p==='main'?' on':'');
   document.getElementById('page-cfg').className='page'+(p==='cfg'?' on':'');
   document.getElementById('page-tpl').className='page'+(p==='tpl'?' on':'');
+  document.getElementById('page-llm').className='page'+(p==='llm'?' on':'');
   document.getElementById('page-hist').className='page'+(p==='hist'?' on':'');
   if(p==='cfg'){ loadCfgPage(); }
   else { stopStatePoll(); }
   if(p==='tpl'){ loadTplPage(); }
+  if(p==='llm'){ loadLlmPage(); }
   if(p==='hist'){ loadHist(); }
 }
 
@@ -1475,6 +1490,64 @@ var TPL_GROUPS=[
     {k:'sec_tip',label:'小贴士',def:true,type:'check'},
   ]},
 ];
+/* ─── 大模型配置 ─── */
+function loadLlmPage(){
+  // 🔑 打开大模型配置页读最新配置并渲染
+  document.getElementById('llmStatus').textContent='加载中...';
+  var timer=setTimeout(function(){
+    document.getElementById('llmStatus').textContent='⚠️ 加载超时';
+  },10000);
+  fetch(BASE+'cfg/config?'+Date.now()).then(function(r){
+    if(!r.ok){ throw new Error('HTTP '+r.status); }
+    return r.json();
+  }).then(function(d){
+    clearTimeout(timer);
+    CONFIG=d||{};
+    renderLlmCfg();
+    document.getElementById('llmStatus').textContent='';
+  }).catch(function(err){
+    clearTimeout(timer);
+    document.getElementById('llmStatus').textContent='⚠️ 加载失败: '+(err&&err.message||'');
+    renderLlmCfg();
+  });
+}
+function renderLlmCfg(){
+  var box=document.getElementById('llmBox');
+  if(!box) return;
+  var llm=((CONFIG.template_settings||{}).llm)||{};
+  var h='';
+  h+='<div class="sec-desc" style="margin-top:4px">提示语是告诉大模型怎么组织播报的指令。可微调语气/结构，留空用默认。</div>';
+  h+='<label class="eng-label">每日播报提示语</label>';
+  h+='<div class="fmt-hint">告诉大模型每日播报怎么写：语气、结构、要求。留空用默认。</div>';
+  h+='<textarea class="eng-input" id="llm_daily_prompt" style="min-height:140px">'+esc(llm.daily_prompt||'')+'</textarea>';
+  h+='<label class="eng-label">周期总结提示语（周/月/年）</label>';
+  h+='<div class="fmt-hint">周/月/年总结的提示语。留空用默认。</div>';
+  h+='<textarea class="eng-input" id="llm_period_prompt" style="min-height:140px">'+esc(llm.period_prompt||'')+'</textarea>';
+  h+='<label class="eng-label">最大生成长度（max_tokens）</label>';
+  h+='<div class="fmt-hint">生成播报稿的最大字数预算。默认 6000，生成太短可调大。</div>';
+  h+='<input class="eng-input" type="number" id="llm_max_tokens" value="'+(llm.max_tokens||6000)+'">';
+  box.innerHTML=h;
+  box.querySelectorAll('input,textarea').forEach(function(inp){
+    inp.addEventListener('input',markDirty);
+  });
+}
+function saveLlm(){
+  var ts=CONFIG.template_settings||{};
+  if(!ts.llm) ts.llm={};
+  ts.llm.daily_prompt=document.getElementById('llm_daily_prompt').value;
+  ts.llm.period_prompt=document.getElementById('llm_period_prompt').value;
+  ts.llm.max_tokens=parseInt(document.getElementById('llm_max_tokens').value)||6000;
+  CONFIG.template_settings=ts;
+  document.getElementById('llmStatus').textContent='保存中...';
+  fetch(BASE+'cfg/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({updates:{template_settings:ts}})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var s=document.getElementById('llmStatus');
+      s.style.color=''; s.textContent = d.ok?'✅ 大模型配置已保存':'❌ 保存失败';
+      if(d.ok) tplDirty=false;
+    })
+    .catch(function(){document.getElementById('llmStatus').textContent='❌ 保存失败';});
+}
 function loadTplPage(){
   // 🔑 打开模板配置页时读最新配置并渲染（加超时，避免一直"加载中"）
   document.getElementById('tplStatus').textContent='加载中...';

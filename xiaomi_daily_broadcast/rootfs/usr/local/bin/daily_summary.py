@@ -954,13 +954,21 @@ def generate_with_llm(report, config):
         print("  ⚠️ LLM 未配置 base_url，回退模板")
         return None
 
+    # 🔑 大模型配置页可自定义提示语：template_settings.llm.daily_prompt / period_prompt（留空用默认）
+    _ts_llm = (config.get("template_settings") or {}).get("llm") or {}
+    _daily_prompt = (_ts_llm.get("daily_prompt") or "").strip()
+    _period_prompt = (_ts_llm.get("period_prompt") or "").strip()
+    _max_tokens_cfg = int(_ts_llm.get("max_tokens") or 0)
+    if _max_tokens_cfg > 0:
+        llm["max_tokens"] = _max_tokens_cfg
+
     # 🔑 板块开关：问候语/结束语/鼓励语可关（LLM 模式也遵循）
     _greet_on = ts_on(config, "greeting")
     _end_on = ts_on(config, "ending")
     _enc_on = ts_on(config, "enc")
     if report.get("summary_type"):
-        # 周期总结：用周期专用 prompt（按板块开关调整）
-        system_prompt = PERIOD_SYSTEM_PROMPT
+        # 周期总结：用周期专用 prompt（可用配置覆盖；按板块开关调整）
+        system_prompt = _period_prompt or PERIOD_SYSTEM_PROMPT
         if not _greet_on:
             system_prompt = system_prompt.replace(
                 "1. 开头用\"这周/这个月/这一年家里……\"的句式，明确这是周期总结，不是每日播报\n",
@@ -1003,9 +1011,13 @@ def generate_with_llm(report, config):
             req_lines[4] = "5. 最后一句固定说播报结束"
         else:
             req_lines[4] = "5. 不需要鼓励语和结束语"
-        system_prompt = ("你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，"
-                         "生成一段自然、亲切、口语化的中文播报稿。\n要求：\n"
-                         + "\n".join(req_lines) + "\n")
+        # 🔑 用户自定义每日提示语优先；否则用默认+板块开关调整
+        if _daily_prompt:
+            system_prompt = _daily_prompt
+        else:
+            system_prompt = ("你是家里的小爱音箱播报助手。根据用户提供的家里实时数据，"
+                             "生成一段自然、亲切、口语化的中文播报稿。\n要求：\n"
+                             + "\n".join(req_lines) + "\n")
         user_msg = (
             f"现在是{report['time']['weekday']}{report['time']['period']}，请播报家中情况。\n"
             f"家里实时数据如下：\n{json.dumps(report, ensure_ascii=False)}"
