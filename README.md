@@ -1,6 +1,6 @@
 # 🎙️ 小爱每日播报 (Home Assistant Add-on Repository)
 
-小米音箱定时播报家里实时情况的 Home Assistant 加载项。
+让小米音箱播报家里实时情况的 Home Assistant 加载项。支持**每日/周/月/年**播报、**大模型引擎**、**可视化配置**的播报内容，Web UI 一站式操作。
 
 ## 安装
 
@@ -17,3 +17,7 @@ https://github.com/AIone-1/hassio-addon-xiaomi-broadcast
 ## 加载项说明
 
 详见 [xiaomi_daily_broadcast/README.md](xiaomi_daily_broadcast/README.md)。
+
+## 📄 License
+
+MIT
