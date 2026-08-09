@@ -10,7 +10,7 @@
   POST /task        → 记录一条终端任务时间戳
   POST /memo        → 追加备忘
 """
-import asyncio, json, os, threading, time
+import asyncio, json, os, threading, time, copy
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -56,6 +56,71 @@ def _pop_stack(path):
         return record
     except Exception:
         return None
+
+
+def _undo_apply(record):
+    """通用撤销：恢复操作前状态。record = {type, desc, data}。返回 (ok, msg)"""
+    t = record.get("type") or "history_del"
+    data = record.get("data") or record
+    try:
+        if t == "history_del":
+            # 撤销删除 = 把被删记录写回历史
+            with open(HISTORY_FILE, "a") as f:
+                f.write(json.dumps(data, ensure_ascii=False) + "\n")
+            return True, f"已撤销删除，恢复 {data.get('date','')} {data.get('ts','')} 的记录"
+        elif t == "fix_anomaly":
+            # 撤销修复 = 恢复该天原始快照（含异常值）
+            snaps = ds.load_snapshots()
+            snaps[data["date"]] = data["before"]
+            ds.save_snapshots(snaps)
+            return True, f"已撤销修复，{data['date']} 恢复原始数据"
+        elif t == "clear_snap":
+            # 撤销清除 = 恢复被清除的当天快照
+            snaps = ds.load_snapshots()
+            snaps[data["date"]] = data["snapshot"]
+            ds.save_snapshots(snaps)
+            return True, f"已撤销清除，恢复 {data['date']} 的数据"
+        return False, f"未知操作类型 {t}"
+    except Exception as e:
+        return False, f"撤销失败: {e}"
+
+
+def _redo_apply(record):
+    """通用恢复（redo）：重新执行操作。record = {type, desc, data}。返回 (ok, msg)"""
+    t = record.get("type") or "history_del"
+    data = record.get("data") or record
+    try:
+        if t == "history_del":
+            # 恢复 = 重新删除该条历史
+            if HISTORY_FILE.exists():
+                lines = HISTORY_FILE.read_text().splitlines()
+                keep = []
+                for line in lines:
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        keep.append(line)
+                        continue
+                    if r.get("date") == data.get("date") and r.get("ts") == data.get("ts"):
+                        continue
+                    keep.append(line)
+                HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
+            return True, f"已重新删除 {data.get('date','')} {data.get('ts','')} 的记录"
+        elif t == "fix_anomaly":
+            # 恢复 = 重新应用修复后的值
+            snaps = ds.load_snapshots()
+            snaps[data["date"]] = data["after"]
+            ds.save_snapshots(snaps)
+            return True, f"已重新修复 {data['date']}"
+        elif t == "clear_snap":
+            # 恢复 = 重新清除当天
+            snaps = ds.load_snapshots()
+            snaps.pop(data["date"], None)
+            ds.save_snapshots(snaps)
+            return True, f"已重新清除 {data['date']} 的数据"
+        return False, f"未知操作类型 {t}"
+    except Exception as e:
+        return False, f"恢复失败: {e}"
 
 
 def load_history():
@@ -833,9 +898,10 @@ class Handler(BaseHTTPRequestHandler):
                             continue  # 删除这条
                         keep.append(line)
                     HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
-                    # 🔑 存撤销栈（栈顶=最近删除）；新删除清空 redo 栈（标准撤销语义）
+                    # 🔑 存撤销栈（栈顶=最近操作）；新操作清空 redo 栈（标准撤销语义）
                     if deleted:
-                        _push_stack(UNDO_FILE, deleted)
+                        _push_stack(UNDO_FILE, {"type": "history_del", "desc": f"删除 {date_str} 的历史记录",
+                                                "data": deleted})
                         try:
                             REDO_FILE.unlink(missing_ok=True)
                         except Exception:
@@ -846,45 +912,33 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/history/restore":
-            # ↩ 撤销：从撤销栈恢复最近一条被删的记录（不依赖前端）
+            # ↩ 通用撤销：从撤销栈恢复最近一次操作（删除历史/修复异常/清除当天）
             try:
-                record = _pop_stack(UNDO_FILE)   # 栈顶=最近删除
+                record = _pop_stack(UNDO_FILE)   # 栈顶=最近操作
                 if not record:
                     self._send(200, json.dumps({"ok": False, "error": "无撤销记录"}), "application/json")
                     return
-                # 写回历史
-                with open(HISTORY_FILE, "a") as f:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                # 存入 redo 栈（可恢复删除）
-                _push_stack(REDO_FILE, record)
-                self._send(200, json.dumps({"ok": True, "msg": f"已恢复 {record.get('date','')} {record.get('ts','')} 的记录"}), "application/json")
+                ok, msg = _undo_apply(record)
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": msg}), "application/json")
+                    return
+                _push_stack(REDO_FILE, record)  # 存入 redo 栈（可恢复）
+                self._send(200, json.dumps({"ok": True, "msg": msg}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/history/undo-del":
-            # ↪ 恢复（redo）：撤销后把记录重新删掉（等价再删一次），并重新进 undo 栈（可再撤销）
+            # ↪ 通用恢复（redo）：重新执行撤销掉的操作，并重新进 undo 栈（可再撤销）
             try:
                 record = _pop_stack(REDO_FILE)   # 栈顶=最近撤销
                 if not record:
                     self._send(200, json.dumps({"ok": False, "error": "无恢复记录"}), "application/json")
                     return
-                if HISTORY_FILE.exists():
-                    lines = HISTORY_FILE.read_text().splitlines()
-                    keep = []
-                    for line in lines:
-                        try:
-                            r = json.loads(line)
-                        except Exception:
-                            keep.append(line)
-                            continue
-                        if r.get("date") == record.get("date") and r.get("ts") == record.get("ts"):
-                            continue  # 删除这条
-                        keep.append(line)
-                    HISTORY_FILE.write_text("\n".join(keep) + ("\n" if keep else ""))
-                    # 🔑 重新删除 = 一次新删除，记录重新进 undo 栈（撤销→恢复→再撤销 循环可用）
-                    _push_stack(UNDO_FILE, record)
-                    self._send(200, json.dumps({"ok": True, "msg": f"已重新删除 {record.get('date','')} {record.get('ts','')} 的记录"}), "application/json")
-                else:
-                    self._send(200, json.dumps({"ok": False, "error": "无历史文件"}), "application/json")
+                ok, msg = _redo_apply(record)
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": msg}), "application/json")
+                    return
+                _push_stack(UNDO_FILE, record)  # 🔑 重新进 undo 栈，撤销→恢复→再撤销 循环可用
+                self._send(200, json.dumps({"ok": True, "msg": msg}), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         elif path == "/fix-anomaly":
@@ -925,8 +979,17 @@ class Handler(BaseHTTPRequestHandler):
                     # 重算 total
                     p["total_kwh"] = round(sum(by_dev.values()), 1)
                     s["power"] = p
+                    # 🔑 存撤销：记录修复前/后整天的快照，可撤销恢复原始、可恢复再修复
+                    _before = copy.deepcopy(snaps[date_str])
                     snaps[date_str] = s
+                    _after = copy.deepcopy(s)
                     ds.save_snapshots(snaps)
+                    _push_stack(UNDO_FILE, {"type": "fix_anomaly", "desc": f"修复 {date_str} 的异常数据",
+                                            "data": {"date": date_str, "before": _before, "after": _after}})
+                    try:
+                        REDO_FILE.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                     msg = f"已修复 {date_str}：{'、'.join(fixed) if fixed else '无异常设备'}"
                 else:
                     msg = f"{date_str} 无快照数据"
@@ -973,6 +1036,13 @@ class Handler(BaseHTTPRequestHandler):
                 snaps = ds.load_snapshots()
                 today = datetime.now().strftime("%Y-%m-%d")
                 if today in snaps:
+                    # 🔑 存撤销：清空前保留当天快照，可撤销恢复
+                    _push_stack(UNDO_FILE, {"type": "clear_snap", "desc": f"清除 {today} 的统计数据",
+                                            "data": {"date": today, "snapshot": copy.deepcopy(snaps[today])}})
+                    try:
+                        REDO_FILE.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                     del snaps[today]
                     ds.save_snapshots(snaps)
                     msg = f"已清除 {today} 的数据，从明天开始正常积累"
