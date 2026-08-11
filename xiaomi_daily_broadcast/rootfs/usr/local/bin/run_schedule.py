@@ -340,6 +340,7 @@ def generate_greeting():
             data = json.loads(resp.read())
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
         if text:
+            ds._record_llm_call()  # 🔑 大模型成功调用（问候语）记一次
             return text[:40]
     except Exception as e:
         log(f"⚠️ 生成问候语失败: {e}")
@@ -471,6 +472,7 @@ def generate_week(section, cfg, dates=None):
                     days[m.group(1)] = t
         if not days:
             return {"ok": False, "days": {}, "error": "没解析出任何日期文案"}
+        ds._record_llm_call()  # 🔑 大模型成功调用（问候/结束/小贴士/鼓励）记一次
         log(f"🤖 已生成{name}（共{len(days)}天文案）")
         return {"ok": True, "days": days, "error": ""}
     except Exception as e:
