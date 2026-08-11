@@ -37,7 +37,7 @@
   .row button.active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)}
   #btnSpeak,#btnText,#btnClear,#btnEntities{transition:background .2s}
   #btnSpeak.active,#btnText.active,#btnClear.active,#btnEntities.active{background:var(--accent)!important;border:1px solid var(--accent);color:#fff!important}
-  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){border:1px solid var(--border);color:var(--accent2)}
+  #btnSpeak:not(.active),#btnText:not(.active),#btnClear:not(.active),#btnEntities:not(.active){border:1px solid var(--border);color:var(--control-text)}
   input[type=text]{padding:8px;border-radius:6px;background:var(--bg-inset);color:var(--text);border:1px solid var(--border)}
   .entry{display:flex;gap:8px;align-items:center;margin-bottom:6px}
   .entry select{flex:1;min-width:200px}
@@ -1471,8 +1471,7 @@ function loadStats(){
     if(!d || d.sensors===undefined){ bar.innerHTML=''; return; }
     var offCls=(d.offline>0)?'color:var(--red)':'';
     bar.innerHTML=
-      '<span>📡 传感器共 <b>'+d.sensors+'</b> 个</span>'
-      +'<span style="'+offCls+'">'+(d.offline>0?('⚠️ 离线 <b>'+d.offline+'</b> 个'):'（全部在线）')+'</span>'
+      '<span>📡 传感器共 <b>'+d.sensors+'</b> 个'+(d.offline>0?(' <span style="'+offCls+'">⚠️ 离线 <b>'+d.offline+'</b> 个</span>'):'（全部在线）')+'</span>'
       +'<span>📅 已统计 <b>'+d.days+'</b> 天</span>'
       +'<span>🤖 大模型调用 <b>'+(d.llm_total||0)+'</b> 次'+(d.llm_today>0?('（今天 <b>'+d.llm_today+'</b> 次）'):'')+'，约 <b>'+(d.llm_tokens||0)+'</b> tokens</span>';
   }).catch(function(){});
