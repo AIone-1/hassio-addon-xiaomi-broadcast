@@ -69,7 +69,10 @@
   .search-row select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:28px}
   .search-row input:focus{border-color:var(--accent);outline:none}
   #log{font-family:ui-monospace,monospace;font-size:12px;max-height:400px;overflow-y:auto;background:var(--bg3);padding:10px;border-radius:8px}
-  #status{font-size:12px;color:var(--dim)}
+  #status{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px}
+  /* 🔑 就绪状态前的绿色闪烁小点 */
+  .status-dot{width:8px;height:8px;border-radius:50%;background:#3fb950;display:inline-block;flex:0 0 auto;animation:statusBlink 1.2s infinite}
+  @keyframes statusBlink{0%,100%{opacity:1}50%{opacity:.15}}
   .save-status{font-size:12px;color:var(--green);min-height:18px;margin-top:8px}
   .week-tab{flex:1;text-align:center;padding:7px 0;border-radius:8px;background:var(--bg-inset);border:1px solid var(--border);color:var(--dim);cursor:pointer;font-size:13px;user-select:none}
   .week-tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -148,7 +151,7 @@
       <button id="btnClear" onclick="clearLog()">🗑️ 清空日志</button>
       <button id="btnEntities" onclick="showEntities()">🔑 传感器实体</button>
     </div>
-    <div id="status">就绪</div>
+    <div id="status"><span class="status-dot"></span>就绪</div>
   </div>
   <div class="card" id="entitiesBox" style="display:none"></div>
   <div class="card" id="textCard" style="display:none">
@@ -1469,7 +1472,7 @@ function loadStats(){
     var offCls=(d.offline>0)?'color:var(--red)':'';
     bar.innerHTML=
       '<span>📡 传感器共 <b>'+d.sensors+'</b> 个</span>'
-      +'<span style="'+offCls+'">'+(d.offline>0?('⚠️ 离线 <b>'+d.offline+'</b> 个'):'✅ 全部在线')+'</span>'
+      +'<span style="'+offCls+'">'+(d.offline>0?('⚠️ 离线 <b>'+d.offline+'</b> 个'):'（全部在线）')+'</span>'
       +'<span>📅 已统计 <b>'+d.days+'</b> 天</span>'
       +'<span>🤖 大模型调用 <b>'+(d.llm_total||0)+'</b> 次'+(d.llm_today>0?('（今天 <b>'+d.llm_today+'</b> 次）'):'')+'，约 <b>'+(d.llm_tokens||0)+'</b> tokens</span>';
   }).catch(function(){});
