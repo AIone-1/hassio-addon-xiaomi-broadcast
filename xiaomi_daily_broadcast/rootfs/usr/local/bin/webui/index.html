@@ -1466,12 +1466,12 @@ function loadStats(){
   if(!bar) return;
   fetch(BASE+'stats?'+Date.now()).then(function(r){return r.json()}).then(function(d){
     if(!d || d.sensors===undefined){ bar.innerHTML=''; return; }
-    var offCls=(d.offline>0)?'color:var(--red)':'color:var(--green)';
+    var offCls=(d.offline>0)?'color:var(--red)':'';
     bar.innerHTML=
       '<span>📡 传感器共 <b>'+d.sensors+'</b> 个</span>'
       +'<span style="'+offCls+'">'+(d.offline>0?('⚠️ 离线 <b>'+d.offline+'</b> 个'):'✅ 全部在线')+'</span>'
       +'<span>📅 已统计 <b>'+d.days+'</b> 天</span>'
-      +'<span>🤖 大模型调用 <b>'+(d.llm_total||0)+'</b> 次'+(d.llm_today>0?('（今天 <b>'+d.llm_today+'</b> 次）'):'')+'</span>';
+      +'<span>🤖 大模型调用 <b>'+(d.llm_total||0)+'</b> 次'+(d.llm_today>0?('（今天 <b>'+d.llm_today+'</b> 次）'):'')+'，约 <b>'+(d.llm_tokens||0)+'</b> tokens</span>';
   }).catch(function(){});
 }
 // 🔑 日志显示优化：每行 = 时间(灰) + 图标 + 消息（按类型分色），一眼看懂

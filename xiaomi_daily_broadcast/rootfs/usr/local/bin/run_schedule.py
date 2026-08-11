@@ -340,7 +340,8 @@ def generate_greeting():
             data = json.loads(resp.read())
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
         if text:
-            ds._record_llm_call()  # 🔑 大模型成功调用（问候语）记一次
+            _u = data.get("usage") or {}
+            ds._record_llm_call(int(_u.get("input_tokens", 0) or 0) + int(_u.get("output_tokens", 0) or 0))  # 🔑 问候语成功调用计数+tokens
             return text[:40]
     except Exception as e:
         log(f"⚠️ 生成问候语失败: {e}")
@@ -472,7 +473,8 @@ def generate_week(section, cfg, dates=None):
                     days[m.group(1)] = t
         if not days:
             return {"ok": False, "days": {}, "error": "没解析出任何日期文案"}
-        ds._record_llm_call()  # 🔑 大模型成功调用（问候/结束/小贴士/鼓励）记一次
+        _u = data.get("usage") or {}
+        ds._record_llm_call(int(_u.get("input_tokens", 0) or 0) + int(_u.get("output_tokens", 0) or 0))  # 🔑 周文案成功调用计数+tokens
         log(f"🤖 已生成{name}（共{len(days)}天文案）")
         return {"ok": True, "days": days, "error": ""}
     except Exception as e:
@@ -858,13 +860,14 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 days = len(ds.load_snapshots())
-                # 🔑 大模型调用次数（总 + 当天）
+                # 🔑 大模型调用次数（总 + 当天）+ 消耗 tokens
                 llm_count = ds._load_llm_count()
                 self._send(200, json.dumps({
                     "sensors": total, "offline": offline, "days": days,
                     "llm_total": llm_count.get("total", 0),
                     "llm_today": llm_count.get("count", 0),
                     "llm_date": llm_count.get("date", ""),
+                    "llm_tokens": llm_count.get("total_tokens", 0),
                 }, ensure_ascii=False), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")

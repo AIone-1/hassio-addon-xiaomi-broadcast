@@ -929,15 +929,16 @@ def _load_llm_count():
     return {"date": datetime.now().strftime("%Y-%m-%d"), "count": 0, "total": 0}
 
 
-def _record_llm_call():
-    """🔑 每次大模型成功调用记一次：当天 count + 总 total（原子写，防并发损坏）"""
+def _record_llm_call(tokens=0):
+    """🔑 每次大模型成功调用记一次：当天 count + 总 total + 总 tokens（原子写，防并发损坏）"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         d = _load_llm_count()
         if d.get("date") != today:
-            d = {"date": today, "count": 0, "total": d.get("total", 0)}
+            d = {"date": today, "count": 0, "total": d.get("total", 0), "total_tokens": d.get("total_tokens", 0)}
         d["count"] = d.get("count", 0) + 1
         d["total"] = d.get("total", 0) + 1
+        d["total_tokens"] = d.get("total_tokens", 0) + int(tokens or 0)
         tmp = LLM_COUNT_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(d, ensure_ascii=False))
         tmp.replace(LLM_COUNT_FILE)
@@ -1067,7 +1068,10 @@ def generate_with_llm(report, config):
     else:
         return None
 
-    _record_llm_call()  # 🔑 成功调用大模型记一次（当天 count + 总 total）
+    # 🔑 成功调用大模型记一次（当天 count + 总 total + 消耗 tokens）
+    _usage = data.get("usage") or {}
+    _tokens = int(_usage.get("input_tokens", 0) or 0) + int(_usage.get("output_tokens", 0) or 0)
+    _record_llm_call(_tokens)
 
     # 切成句子：按标点断句；过长的句再按逗号拆。
     # ⚠️ 只丢纯空串，不丢短句——否则"开灯了""温度舒适"等短句会消失导致内容不全
