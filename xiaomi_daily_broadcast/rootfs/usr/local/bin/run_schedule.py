@@ -611,6 +611,7 @@ def button_watcher():
     # 实体名映射：entity -> type
     ENT2TYPE = {b["entity"]: b["type"] for b in BUTTONS}
     ENT2NAME = {b["entity"]: b["name"] for b in BUTTONS}
+    retry_count = 0   # 🔑 连续重连次数（防日志刷屏：正常关闭静默重连、真错误只提示首次+每10次）
     while True:
         try:
             ws_url, token = _ws_connect()
@@ -638,8 +639,19 @@ def button_watcher():
                                 log(f"🔔 播报按钮被按下（{ENT2NAME[eid]}），触发{ENT2TYPE[eid]}播报")
                                 run_broadcast(summary_type=ENT2TYPE[eid], text_only=False)
             asyncio.run(_watch())
+            retry_count = 0   # 🔑 连接正常存活期间重置重连计数
         except Exception as e:
-            log(f"⚠️ 播报按钮监听错误（重连）: {e}")
+            retry_count += 1
+            err = str(e)
+            # 🔑 正常关闭（1000/1001 = 服务器主动关闭，如 HA 重启/维护）→ 静默重连，不刷 ⚠️
+            normal_close = ("1000" in err) or ("1001" in err)
+            if normal_close:
+                if retry_count == 1:
+                    log("🔔 按钮监听连接已断开（正常关闭），自动重连...")
+            elif retry_count == 1:
+                log(f"⚠️ 播报按钮监听连接断开: {e}，正在重连...")
+            elif retry_count % 10 == 0:
+                log(f"⚠️ 按钮监听仍在重连（已连续 {retry_count} 次），HA 可能正在重启或网络异常")
         time.sleep(3)
 
 
