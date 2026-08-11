@@ -856,7 +856,14 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 days = len(ds.load_snapshots())
-                self._send(200, json.dumps({"sensors": total, "offline": offline, "days": days}, ensure_ascii=False), "application/json")
+                # 🔑 大模型调用次数（总 + 当天）
+                llm_count = ds._load_llm_count()
+                self._send(200, json.dumps({
+                    "sensors": total, "offline": offline, "days": days,
+                    "llm_total": llm_count.get("total", 0),
+                    "llm_today": llm_count.get("count", 0),
+                    "llm_date": llm_count.get("date", ""),
+                }, ensure_ascii=False), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
         else:

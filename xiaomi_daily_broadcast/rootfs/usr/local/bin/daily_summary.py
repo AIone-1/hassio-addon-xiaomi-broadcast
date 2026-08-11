@@ -18,6 +18,7 @@ MEMO_FILE = DATA_DIR / "memos.json"
 SNAPSHOT_FILE = DATA_DIR / "daily_stats_history.json"
 BROADCAST_STATE = Path("/data/broadcast_state.json")
 MARKER_DIR = Path("/data/markers")
+LLM_COUNT_FILE = Path("/data/llm_call_count.json")   # 大模型调用次数 {date: 当天次数, total: 总次数}
 
 # HA 连接（启动时由 _ha_endpoints() 更新，不硬编码）
 HA_WS = "ws://supervisor/core/websocket"
@@ -918,6 +919,32 @@ def _time_period(h):
     return "晚上"
 
 
+def _load_llm_count():
+    """读大模型调用次数 {date: 当天次数, total: 总次数}；文件损坏/不存在返回空结构"""
+    try:
+        if LLM_COUNT_FILE.exists():
+            return json.loads(LLM_COUNT_FILE.read_text())
+    except Exception:
+        pass
+    return {"date": datetime.now().strftime("%Y-%m-%d"), "count": 0, "total": 0}
+
+
+def _record_llm_call():
+    """🔑 每次大模型成功调用记一次：当天 count + 总 total（原子写，防并发损坏）"""
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        d = _load_llm_count()
+        if d.get("date") != today:
+            d = {"date": today, "count": 0, "total": d.get("total", 0)}
+        d["count"] = d.get("count", 0) + 1
+        d["total"] = d.get("total", 0) + 1
+        tmp = LLM_COUNT_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False))
+        tmp.replace(LLM_COUNT_FILE)
+    except Exception:
+        pass
+
+
 def generate_with_llm(report, config):
     """用大模型生成播报稿（Anthropic Messages API，纯标准库 urllib）。
     返回句子列表（每句一句、句号结尾）；失败返回 None，上层回退模板。"""
@@ -1039,6 +1066,8 @@ def generate_with_llm(report, config):
             continue
     else:
         return None
+
+    _record_llm_call()  # 🔑 成功调用大模型记一次（当天 count + 总 total）
 
     # 切成句子：按标点断句；过长的句再按逗号拆。
     # ⚠️ 只丢纯空串，不丢短句——否则"开灯了""温度舒适"等短句会消失导致内容不全

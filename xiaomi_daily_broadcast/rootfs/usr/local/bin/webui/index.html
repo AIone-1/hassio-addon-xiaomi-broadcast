@@ -1470,7 +1470,8 @@ function loadStats(){
     bar.innerHTML=
       '<span>📡 传感器共 <b>'+d.sensors+'</b> 个</span>'
       +'<span style="'+offCls+'">'+(d.offline>0?('⚠️ 离线 <b>'+d.offline+'</b> 个'):'✅ 全部在线')+'</span>'
-      +'<span>📅 已统计 <b>'+d.days+'</b> 天</span>';
+      +'<span>📅 已统计 <b>'+d.days+'</b> 天</span>'
+      +'<span style="color:var(--purple)">🤖 大模型调用 <b>'+(d.llm_total||0)+'</b> 次'+(d.llm_today>0?('（今天 <b>'+d.llm_today+'</b> 次）'):'')+'</span>';
   }).catch(function(){});
 }
 // 🔑 日志显示优化：每行 = 时间(灰) + 图标 + 消息（按类型分色），一眼看懂
